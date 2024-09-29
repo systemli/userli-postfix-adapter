@@ -27,6 +27,15 @@ func (s *AliasTestSuite) TestAlias() {
 	alias := NewAlias(listen, userli)
 	go alias.Listen()
 
+	// wait until the server is ready
+	for {
+		conn, err := net.Dial("tcp", listen)
+		if err == nil {
+			conn.Close()
+			break
+		}
+	}
+
 	s.Run("success", func() {
 		conn, err := net.Dial("tcp", listen)
 		s.NoError(err)
