@@ -49,7 +49,8 @@ func (a *Alias) handle(conn net.Conn) {
 	command = bytes.Trim(command, "\x00")
 	parts := strings.Split(string(command), " ")
 	if len(parts) < 2 || parts[0] != "get" {
-		conn.Write([]byte("400 Bad Request\n"))
+		fmt.Println("Invalid command")
+		_, _ = conn.Write([]byte("400 Bad Request\n"))
 		return
 	}
 
@@ -57,14 +58,14 @@ func (a *Alias) handle(conn net.Conn) {
 	aliases, err := a.userli.GetAliases(string(email))
 	if err != nil {
 		fmt.Println("Error fetching aliases:", err.Error())
-		conn.Write([]byte("400 Error fetching aliases\n"))
+		_, _ = conn.Write([]byte("400 Error fetching aliases\n"))
 		return
 	}
 
 	if len(aliases) == 0 {
-		conn.Write([]byte("500 NO%20RESULT\n"))
+		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
 		return
 	}
 
-	conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))))
+	_, _ = conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))))
 }
