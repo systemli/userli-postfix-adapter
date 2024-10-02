@@ -16,9 +16,8 @@ import (
 type AdapterTestSuite struct {
 	suite.Suite
 
-	ctx    context.Context
-	wg     *sync.WaitGroup
-	client UserliService
+	ctx context.Context
+	wg  *sync.WaitGroup
 }
 
 func (s *AdapterTestSuite) SetupTest() {
@@ -96,6 +95,8 @@ func (s *AdapterTestSuite) TestAliasHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 		s.Equal("400 Error fetching aliases\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
 	})
 }
 
@@ -166,6 +167,78 @@ func (s *AdapterTestSuite) TestDomainHandler() {
 		s.NoError(err)
 
 		s.Equal("400 Error fetching domain\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+}
+
+func (s *AdapterTestSuite) TestMailboxHandler() {
+	userli := new(MockUserliService)
+	userli.On("GetMailbox", "user@example.org").Return(true, nil)
+	userli.On("GetMailbox", "nonexisting@example.org").Return(false, nil)
+	userli.On("GetMailbox", "error@example.org").Return(false, errors.New("error"))
+
+	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
+	portNumber.Add(portNumber, big.NewInt(20000))
+	listen := ":" + portNumber.String()
+
+	adapter := NewPostfixAdapter(userli)
+
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.MailboxHandler)
+
+	// wait until the server is ready
+	for {
+		conn, err := net.Dial("tcp", listen)
+		if err == nil {
+			conn.Close()
+			break
+		}
+	}
+
+	s.Run("success", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get user@example.org"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("200 1\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+
+	s.Run("not found", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get nonexisting@example.org"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+
+	s.Run("error", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get error@example.org"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("400 Error fetching mailbox\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
