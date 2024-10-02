@@ -75,6 +75,35 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 	_, _ = conn.Write([]byte("200 1\n"))
 }
 
+// MailboxHandler handles the get command for mailboxes.
+// It checks if the mailbox exists.
+// The response is a single line with the status code.
+func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
+	defer conn.Close()
+
+	payload, err := p.payload(conn)
+	if err != nil {
+		fmt.Println("Error getting payload:", err.Error())
+		_, _ = conn.Write([]byte("400 Error getting payload\n"))
+		return
+	}
+
+	email := strings.TrimSuffix(payload, "\n")
+	exists, err := p.client.GetMailbox(string(email))
+	if err != nil {
+		fmt.Println("Error fetching mailbox:", err.Error())
+		_, _ = conn.Write([]byte("400 Error fetching mailbox\n"))
+		return
+	}
+
+	if !exists {
+		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
+		return
+	}
+
+	_, _ = conn.Write([]byte("200 1\n"))
+}
+
 // payload reads the data from the connection. It checks for valid
 // commands sent by postfix and returns the payload.
 func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {

@@ -10,6 +10,7 @@ import (
 type UserliService interface {
 	GetAliases(email string) ([]string, error)
 	GetDomain(domain string) (bool, error)
+	GetMailbox(email string) (bool, error)
 }
 
 type Userli struct {
@@ -44,6 +45,21 @@ func (u *Userli) GetAliases(email string) ([]string, error) {
 
 func (u *Userli) GetDomain(domain string) (bool, error) {
 	resp, err := u.call(fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
+	if err != nil {
+		return false, err
+	}
+
+	var result bool
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		return false, err
+	}
+
+	return result, nil
+}
+
+func (u *Userli) GetMailbox(email string) (bool, error) {
+	resp, err := u.call(fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, email))
 	if err != nil {
 		return false, err
 	}

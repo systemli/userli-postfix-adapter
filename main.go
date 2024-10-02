@@ -37,6 +37,11 @@ func main() {
 		domainListenAddr = ":10002"
 	}
 
+	mailboxListenAddr := os.Getenv("MAILBOX_LISTEN_ADDR")
+	if mailboxListenAddr == "" {
+		mailboxListenAddr = ":10003"
+	}
+
 	userli := NewUserli(userliToken, userliBaseURL)
 	adapter := NewPostfixAdapter(userli)
 
@@ -45,9 +50,10 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	wg.Add(2)
+	wg.Add(3)
 	go StartTCPServer(ctx, &wg, aliasListenAddr, adapter.AliasHandler)
 	go StartTCPServer(ctx, &wg, domainListenAddr, adapter.DomainHandler)
+	go StartTCPServer(ctx, &wg, mailboxListenAddr, adapter.MailboxHandler)
 
 	wg.Wait()
 	fmt.Println("Servers stopped")
