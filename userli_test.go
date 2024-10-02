@@ -24,7 +24,7 @@ func (s *UserliTestSuite) TestGetAliases() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/alias/alias@example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -40,7 +40,7 @@ func (s *UserliTestSuite) TestGetAliases() {
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/alias/alias@example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -58,7 +58,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -73,7 +73,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 	s.Run("not found", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -89,7 +89,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -107,7 +107,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/mailbox/user@example.org").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -123,7 +123,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 	s.Run("not found", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/mailbox/user@example.org").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -139,7 +139,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/mailbox/user@example.org").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -157,7 +157,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/senders/user@example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -173,7 +173,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 	s.Run("alias success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/senders/alias@example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
@@ -189,7 +189,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/senders/user@example.com").
-			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Authorization", "Bearer insecure").
 			MatchHeader("Accept", "application/json").
 			MatchHeader("Content-Type", "application/json").
 			MatchHeader("User-Agent", "userli-postfix-adapter").
