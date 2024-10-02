@@ -14,32 +14,42 @@ type UserliTestSuite struct {
 }
 
 func (s *UserliTestSuite) SetupTest() {
+	s.userli = NewUserli("insecure", "http://localhost:8000")
+
 	gock.DisableNetworking()
 	defer gock.Off()
-
-	s.userli = NewUserli("insecure", "http://localhost:8000")
 }
 
 func (s *UserliTestSuite) TestGetAliases() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/alias/alias@example.com").
+			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
 			Reply(200).
 			JSON([]string{"source1@example.com", "source2@example.com"})
 
 		aliases, err := s.userli.GetAliases("alias@example.com")
 		s.NoError(err)
+		s.True(gock.IsDone())
 		s.Equal([]string{"source1@example.com", "source2@example.com"}, aliases)
 	})
 
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/alias/alias@example.com").
+			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
 		aliases, err := s.userli.GetAliases("alias@example.com")
 		s.Error(err)
+		s.True(gock.IsDone())
 		s.Empty(aliases)
 	})
 }
@@ -48,6 +58,10 @@ func (s *UserliTestSuite) TestGetDomain() {
 	s.Run("success", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
+			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
 			Reply(200).
 			JSON("true")
 
@@ -59,22 +73,32 @@ func (s *UserliTestSuite) TestGetDomain() {
 	s.Run("not found", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
+			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
 			Reply(200).
 			JSON("false")
 
 		active, err := s.userli.GetDomain("example.com")
 		s.NoError(err)
+		s.True(gock.IsDone())
 		s.False(active)
 	})
 
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/domain/example.com").
+			MatchHeader("Authentication", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
 		active, err := s.userli.GetDomain("example.com")
 		s.Error(err)
+		s.True(gock.IsDone())
 		s.False(active)
 	})
 }

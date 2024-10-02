@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type UserliService interface {
@@ -19,25 +20,17 @@ type Userli struct {
 }
 
 func NewUserli(token, baseURL string) *Userli {
-	return &Userli{token: token, baseURL: baseURL, Client: &http.Client{}}
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	return &Userli{token: token, baseURL: baseURL, Client: client}
 }
 
 func (u *Userli) GetAliases(email string) ([]string, error) {
-	url := fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	resp, err := u.call(fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email))
 	if err != nil {
 		return []string{}, err
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.token))
-	resp, err := u.Client.Do(req)
-	if err != nil {
-		return []string{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return []string{}, fmt.Errorf("error fetching aliases: %s", resp.Status)
 	}
 
 	var aliases []string
@@ -50,21 +43,9 @@ func (u *Userli) GetAliases(email string) ([]string, error) {
 }
 
 func (u *Userli) GetDomain(domain string) (bool, error) {
-	url := fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	resp, err := u.call(fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
 	if err != nil {
 		return false, err
-	}
-
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.token))
-	resp, err := u.Client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("error fetching domain: %s", resp.Status)
 	}
 
 	var result bool
@@ -74,4 +55,24 @@ func (u *Userli) GetDomain(domain string) (bool, error) {
 	}
 
 	return result, nil
+}
+
+func (u *Userli) call(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authentication", fmt.Sprintf("Bearer %s", u.token))
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "userli-postfix-adapter")
+
+	resp, err := u.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
