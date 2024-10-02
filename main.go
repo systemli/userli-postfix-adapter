@@ -38,8 +38,7 @@ func main() {
 	}
 
 	userli := NewUserli(userliToken, userliBaseURL)
-	alias := NewAlias(userli)
-	domain := NewDomain(userli)
+	adapter := NewPostfixAdapter(userli)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -47,8 +46,8 @@ func main() {
 	var wg sync.WaitGroup
 
 	wg.Add(2)
-	go StartTCPServer(ctx, &wg, aliasListenAddr, alias.Handle)
-	go StartTCPServer(ctx, &wg, domainListenAddr, domain.Handle)
+	go StartTCPServer(ctx, &wg, aliasListenAddr, adapter.AliasHandler)
+	go StartTCPServer(ctx, &wg, domainListenAddr, adapter.DomainHandler)
 
 	wg.Wait()
 	fmt.Println("Servers stopped")
