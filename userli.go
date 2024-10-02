@@ -95,7 +95,7 @@ func (u *Userli) call(url string) (*http.Response, error) {
 		return nil, err
 	}
 
-	req.Header.Set("Authentication", fmt.Sprintf("Bearer %s", u.token))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.token))
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
