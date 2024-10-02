@@ -7,15 +7,16 @@ import (
 	"strings"
 )
 
-type Alias struct {
+type Domain struct {
 	userli UserliService
 }
 
-func NewAlias(userli UserliService) *Alias {
-	return &Alias{userli: userli}
+func NewDomain(userli UserliService) *Domain {
+	return &Domain{userli: userli}
 }
 
-func (a *Alias) Handle(conn net.Conn) {
+func (d *Domain) Handle(conn net.Conn) {
+	defer conn.Close()
 	command := make([]byte, 4096)
 	_, err := conn.Read(command)
 	if err != nil {
@@ -30,18 +31,18 @@ func (a *Alias) Handle(conn net.Conn) {
 		return
 	}
 
-	email := strings.TrimSuffix(parts[1], "\n")
-	aliases, err := a.userli.GetAliases(string(email))
+	domain := strings.TrimSuffix(parts[1], "\n")
+	exists, err := d.userli.GetDomain(string(domain))
 	if err != nil {
-		fmt.Println("Error fetching aliases:", err.Error())
-		_, _ = conn.Write([]byte("400 Error fetching aliases\n"))
+		fmt.Println("Error fetching domain:", err.Error())
+		_, _ = conn.Write([]byte("400 Error fetching domain\n"))
 		return
 	}
 
-	if len(aliases) == 0 {
+	if !exists {
 		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
 		return
 	}
 
-	_, _ = conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))))
+	_, _ = conn.Write([]byte("200 1\n"))
 }
