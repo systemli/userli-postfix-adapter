@@ -95,6 +95,36 @@ func (_m *MockUserliService) GetMailbox(email string) (bool, error) {
 	return r0, r1
 }
 
+// GetSenders provides a mock function with given fields: email
+func (_m *MockUserliService) GetSenders(email string) ([]string, error) {
+	ret := _m.Called(email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSenders")
+	}
+
+	var r0 []string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) ([]string, error)); ok {
+		return rf(email)
+	}
+	if rf, ok := ret.Get(0).(func(string) []string); ok {
+		r0 = rf(email)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(email)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // NewMockUserliService creates a new instance of MockUserliService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockUserliService(t interface {

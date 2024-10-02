@@ -104,6 +104,35 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 	_, _ = conn.Write([]byte("200 1\n"))
 }
 
+// SendersHandler handles the get command for senders.
+// It fetches the senders for the given email.
+// The response is a comma separated list of senders.
+func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
+	defer conn.Close()
+
+	payload, err := p.payload(conn)
+	if err != nil {
+		fmt.Println("Error getting payload:", err.Error())
+		_, _ = conn.Write([]byte("400 Error getting payload\n"))
+		return
+	}
+
+	email := strings.TrimSuffix(payload, "\n")
+	senders, err := p.client.GetSenders(string(email))
+	if err != nil {
+		fmt.Println("Error fetching senders:", err.Error())
+		_, _ = conn.Write([]byte("400 Error fetching senders\n"))
+		return
+	}
+
+	if len(senders) == 0 {
+		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
+		return
+	}
+
+	_, _ = conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(senders, ","))))
+}
+
 // payload reads the data from the connection. It checks for valid
 // commands sent by postfix and returns the payload.
 func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
