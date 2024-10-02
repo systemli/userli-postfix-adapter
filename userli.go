@@ -11,6 +11,7 @@ type UserliService interface {
 	GetAliases(email string) ([]string, error)
 	GetDomain(domain string) (bool, error)
 	GetMailbox(email string) (bool, error)
+	GetSenders(email string) ([]string, error)
 }
 
 type Userli struct {
@@ -71,6 +72,21 @@ func (u *Userli) GetMailbox(email string) (bool, error) {
 	}
 
 	return result, nil
+}
+
+func (u *Userli) GetSenders(email string) ([]string, error) {
+	resp, err := u.call(fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, email))
+	if err != nil {
+		return []string{}, err
+	}
+
+	var senders []string
+	err = json.NewDecoder(resp.Body).Decode(&senders)
+	if err != nil {
+		return []string{}, err
+	}
+
+	return senders, nil
 }
 
 func (u *Userli) call(url string) (*http.Response, error) {

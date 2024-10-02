@@ -244,6 +244,95 @@ func (s *AdapterTestSuite) TestMailboxHandler() {
 	})
 }
 
+func (s *AdapterTestSuite) TestSendersHandler() {
+	userli := new(MockUserliService)
+	userli.On("GetSenders", "user@example.com").Return([]string{"user@example.com"}, nil)
+	userli.On("GetSenders", "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
+	userli.On("GetSenders", "error@example.com").Return([]string{}, errors.New("error"))
+	userli.On("GetSenders", "nonexisting@example.com").Return([]string{}, nil)
+
+	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
+	portNumber.Add(portNumber, big.NewInt(20000))
+	listen := ":" + portNumber.String()
+
+	adapter := NewPostfixAdapter(userli)
+
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.SendersHandler)
+
+	// wait until the server is ready
+	for {
+		conn, err := net.Dial("tcp", listen)
+		if err == nil {
+			conn.Close()
+			break
+		}
+	}
+
+	s.Run("success", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get user@example.com"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("200 user@example.com \n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+
+	s.Run("alias success", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get alias@example.com"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("200 user1@example.com,user2@example.com \n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+
+	s.Run("error", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get error@example.com"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("400 Error fetching senders\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+
+	s.Run("empty result", func() {
+		conn, err := net.Dial("tcp", listen)
+		s.NoError(err)
+
+		_, err = conn.Write([]byte("get nonexisting@example.com"))
+		s.NoError(err)
+
+		response := make([]byte, 4096)
+		_, err = conn.Read(response)
+		s.NoError(err)
+
+		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
+
+		conn.Close()
+	})
+}
+
 func TestAdapterTestSuite(t *testing.T) {
 	suite.Run(t, new(AdapterTestSuite))
 }
