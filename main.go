@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 )
 
 var (
@@ -28,8 +32,24 @@ func main() {
 		aliasListenAddr = ":10001"
 	}
 
-	userli := NewUserli(userliToken, userliBaseURL)
-	alias := NewAlias(aliasListenAddr, userli)
+	domainListenAddr := os.Getenv("DOMAIN_LISTEN_ADDR")
+	if domainListenAddr == "" {
+		domainListenAddr = ":10002"
+	}
 
-	alias.Listen()
+	userli := NewUserli(userliToken, userliBaseURL)
+	alias := NewAlias(userli)
+	domain := NewDomain(userli)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+	go StartTCPServer(ctx, &wg, aliasListenAddr, alias.Handle)
+	go StartTCPServer(ctx, &wg, domainListenAddr, domain.Handle)
+
+	wg.Wait()
+	fmt.Println("Servers stopped")
 }

@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"math/big"
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -13,6 +15,18 @@ import (
 
 type AliasTestSuite struct {
 	suite.Suite
+
+	wg  *sync.WaitGroup
+	ctx context.Context
+}
+
+func (s *AliasTestSuite) SetupTest() {
+	s.wg = &sync.WaitGroup{}
+	s.ctx = context.Background()
+}
+
+func (s *AliasTestSuite) AfterTest(_, _ string) {
+	s.ctx.Done()
 }
 
 func (s *AliasTestSuite) TestAlias() {
@@ -24,8 +38,9 @@ func (s *AliasTestSuite) TestAlias() {
 	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
 	listen := ":" + portNumber.String()
 
-	alias := NewAlias(listen, userli)
-	go alias.Listen()
+	alias := NewAlias(userli)
+
+	go StartTCPServer(s.ctx, s.wg, listen, alias.Handle)
 
 	// wait until the server is ready
 	for {
