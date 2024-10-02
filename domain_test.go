@@ -36,6 +36,7 @@ func (s *DomainTestSuite) TestDomain() {
 	userli.On("GetDomain", "error.com").Return(false, errors.New("error"))
 
 	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
+	portNumber.Add(portNumber, big.NewInt(20000))
 	listen := ":" + portNumber.String()
 
 	domain := NewDomain(userli)

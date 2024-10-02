@@ -22,6 +22,12 @@ jobs:
       - name: Test
         run: go test -coverprofile=coverage.txt -covermode=atomic ./...
 
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   build:
     name: Build
     runs-on: ubuntu-22.04
@@ -37,25 +43,3 @@ jobs:
 
       - name: Build
         run: go build
-
-  automerge:
-    name: Merge Automatically
-    needs: [test, build]
-    runs-on: ubuntu-22.04
-
-    permissions:
-      pull-requests: write
-      contents: write
-
-    steps:
-      - name: Obtain Access Token
-        id: acces_token
-        run: |
-          TOKEN="$(npx obtain-github-app-installation-access-token ci ${{ secrets.SYSTEMLI_APP_CREDENTIALS_TOKEN }})"
-          echo "::add-mask::$TOKEN"
-          echo "::set-output name=token::$TOKEN"
-
-      - name: Merge
-        uses: fastify/github-action-merge-dependabot@v3
-        with:
-          github-token: ${{ steps.acces_token.outputs.token }}
