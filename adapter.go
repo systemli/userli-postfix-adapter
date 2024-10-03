@@ -12,6 +12,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	ErrPayloadError = "Error getting payload"
+	ErrAPIError     = "Error fetching data"
+
+	ResponseNoResult     = "500 NO%20RESULT\n"
+	ResponsePayloadError = "500 PAYLOAD%20ERROR\n"
+)
+
 // PostfixAdapter is an adapter for postfix postmap commands.
 // See https://www.postfix.org/postmap.1.html
 type PostfixAdapter struct {
@@ -33,28 +41,24 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		log.WithError(err).Error("Error getting payload")
-		_, _ = conn.Write([]byte("400 Error getting payload\n"))
-		requestDurations.With(prometheus.Labels{"handler": "alias", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).Error(ErrPayloadError)
+		p.write(conn, []byte(ResponsePayloadError), now, "alias", "error")
 		return
 	}
 	email := strings.TrimSuffix(payload, "\n")
 	aliases, err := p.client.GetAliases(string(email))
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error("Error fetching aliases")
-		_, _ = conn.Write([]byte("400 Error fetching aliases\n"))
-		requestDurations.With(prometheus.Labels{"handler": "alias", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		p.write(conn, []byte("400 Error fetching aliases\n"), now, "alias", "error")
 		return
 	}
 
 	if len(aliases) == 0 {
-		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
-		requestDurations.With(prometheus.Labels{"handler": "alias", "status": "success"}).Observe(time.Since(now).Seconds())
+		p.write(conn, []byte(ResponseNoResult), now, "alias", "success")
 		return
 	}
 
-	_, _ = conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))))
-	requestDurations.With(prometheus.Labels{"handler": "alias", "status": "success"}).Observe(time.Since(now).Seconds())
+	p.write(conn, []byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))), now, "alias", "success")
 }
 
 // DomainHandler handles the get command for domains.
@@ -68,28 +72,24 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 	payload, err := p.payload(conn)
 	if err != nil {
 		log.WithError(err).Error("Error getting payload")
-		_, _ = conn.Write([]byte("400 Error getting payload\n"))
-		requestDurations.With(prometheus.Labels{"handler": "domain", "status": "error"}).Observe(time.Since(now).Seconds())
+		p.write(conn, []byte(ResponsePayloadError), now, "domain", "error")
 		return
 	}
 
 	domain := strings.TrimSuffix(payload, "\n")
 	exists, err := p.client.GetDomain(string(domain))
 	if err != nil {
-		log.WithError(err).WithField("domain", domain).Error("Error fetching domain")
-		_, _ = conn.Write([]byte("400 Error fetching domain\n"))
-		requestDurations.With(prometheus.Labels{"handler": "domain", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).WithField("domain", domain).Error(ErrAPIError)
+		p.write(conn, []byte("400 Error fetching domain\n"), now, "domain", "error")
 		return
 	}
 
 	if !exists {
-		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
-		requestDurations.With(prometheus.Labels{"handler": "domain", "status": "success"}).Observe(time.Since(now).Seconds())
+		p.write(conn, []byte(ResponseNoResult), now, "domain", "success")
 		return
 	}
 
-	_, _ = conn.Write([]byte("200 1\n"))
-	requestDurations.With(prometheus.Labels{"handler": "domain", "status": "success"}).Observe(time.Since(now).Seconds())
+	p.write(conn, []byte("200 1\n"), now, "domain", "success")
 }
 
 // MailboxHandler handles the get command for mailboxes.
@@ -102,29 +102,25 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		log.WithError(err).Error("Error getting payload")
-		_, _ = conn.Write([]byte("400 Error getting payload\n"))
-		requestDurations.With(prometheus.Labels{"handler": "mailbox", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).Error(ErrPayloadError)
+		p.write(conn, []byte(ResponsePayloadError), now, "mailbox", "error")
 		return
 	}
 
 	email := strings.TrimSuffix(payload, "\n")
 	exists, err := p.client.GetMailbox(string(email))
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error("Error fetching mailbox")
-		_, _ = conn.Write([]byte("400 Error fetching mailbox\n"))
-		requestDurations.With(prometheus.Labels{"handler": "mailbox", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		p.write(conn, []byte("400 Error fetching mailbox\n"), now, "mailbox", "error")
 		return
 	}
 
 	if !exists {
-		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
-		requestDurations.With(prometheus.Labels{"handler": "mailbox", "status": "success"}).Observe(time.Since(now).Seconds())
+		p.write(conn, []byte(ResponseNoResult), now, "mailbox", "success")
 		return
 	}
 
-	_, _ = conn.Write([]byte("200 1\n"))
-	requestDurations.With(prometheus.Labels{"handler": "mailbox", "status": "success"}).Observe(time.Since(now).Seconds())
+	p.write(conn, []byte("200 1\n"), now, "mailbox", "success")
 }
 
 // SendersHandler handles the get command for senders.
@@ -137,29 +133,25 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		log.WithError(err).Error("Error getting payload")
-		_, _ = conn.Write([]byte("400 Error getting payload\n"))
-		requestDurations.With(prometheus.Labels{"handler": "senders", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).Error(ErrPayloadError)
+		p.write(conn, []byte(ResponsePayloadError), now, "senders", "error")
 		return
 	}
 
 	email := strings.TrimSuffix(payload, "\n")
 	senders, err := p.client.GetSenders(string(email))
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error("Error fetching senders")
-		_, _ = conn.Write([]byte("400 Error fetching senders\n"))
-		requestDurations.With(prometheus.Labels{"handler": "senders", "status": "error"}).Observe(time.Since(now).Seconds())
+		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		p.write(conn, []byte("400 Error fetching senders\n"), now, "senders", "error")
 		return
 	}
 
 	if len(senders) == 0 {
-		_, _ = conn.Write([]byte("500 NO%20RESULT\n"))
-		requestDurations.With(prometheus.Labels{"handler": "senders", "status": "success"}).Observe(time.Since(now).Seconds())
+		p.write(conn, []byte(ResponseNoResult), now, "senders", "success")
 		return
 	}
 
-	_, _ = conn.Write([]byte(fmt.Sprintf("200 %s \n", strings.Join(senders, ","))))
-	requestDurations.With(prometheus.Labels{"handler": "senders", "status": "success"}).Observe(time.Since(now).Seconds())
+	p.write(conn, []byte(fmt.Sprintf("200 %s \n", strings.Join(senders, ","))), now, "senders", "success")
 }
 
 // payload reads the data from the connection. It checks for valid
@@ -178,4 +170,12 @@ func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
 	}
 
 	return parts[1], nil
+}
+
+func (h *PostfixAdapter) write(conn net.Conn, response []byte, now time.Time, handler, status string) {
+	_, err := conn.Write(response)
+	if err != nil {
+		log.WithError(err).Error("Error writing response")
+	}
+	requestDurations.With(prometheus.Labels{"handler": handler, "status": status}).Observe(time.Since(now).Seconds())
 }
