@@ -45,10 +45,9 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 		p.write(conn, []byte(ResponsePayloadError), now, "alias", "error")
 		return
 	}
-	email := strings.TrimSuffix(payload, "\n")
-	aliases, err := p.client.GetAliases(string(email))
+	aliases, err := p.client.GetAliases(payload)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
 		p.write(conn, []byte("400 Error fetching aliases\n"), now, "alias", "error")
 		return
 	}
@@ -76,10 +75,9 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 		return
 	}
 
-	domain := strings.TrimSuffix(payload, "\n")
-	exists, err := p.client.GetDomain(string(domain))
+	exists, err := p.client.GetDomain(payload)
 	if err != nil {
-		log.WithError(err).WithField("domain", domain).Error(ErrAPIError)
+		log.WithError(err).WithField("domain", payload).Error(ErrAPIError)
 		p.write(conn, []byte("400 Error fetching domain\n"), now, "domain", "error")
 		return
 	}
@@ -107,10 +105,9 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 		return
 	}
 
-	email := strings.TrimSuffix(payload, "\n")
-	exists, err := p.client.GetMailbox(string(email))
+	exists, err := p.client.GetMailbox(payload)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
 		p.write(conn, []byte("400 Error fetching mailbox\n"), now, "mailbox", "error")
 		return
 	}
@@ -138,10 +135,9 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 		return
 	}
 
-	email := strings.TrimSuffix(payload, "\n")
-	senders, err := p.client.GetSenders(string(email))
+	senders, err := p.client.GetSenders(payload)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Error(ErrAPIError)
+		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
 		p.write(conn, []byte("400 Error fetching senders\n"), now, "senders", "error")
 		return
 	}
@@ -169,13 +165,19 @@ func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
 		return "", errors.New("invalid or unsupported command")
 	}
 
-	return parts[1], nil
+	payload := strings.TrimSuffix(parts[1], "\n")
+
+	log.WithFields(log.Fields{"command": parts[0], "payload": payload}).Debug("Received payload")
+
+	return payload, nil
 }
 
 func (h *PostfixAdapter) write(conn net.Conn, response []byte, now time.Time, handler, status string) {
+	log.WithFields(log.Fields{"response": string(response), "handler": handler, "status": status}).Debug("Writing response")
+
 	_, err := conn.Write(response)
 	if err != nil {
-		log.WithError(err).Error("Error writing response")
+		log.WithError(err).WithFields(log.Fields{"response": string(response), "handler": handler, "status": status}).Error("Error writing response")
 	}
 	requestDurations.With(prometheus.Labels{"handler": handler, "status": status}).Observe(time.Since(now).Seconds())
 }
