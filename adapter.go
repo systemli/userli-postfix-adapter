@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // PostfixAdapter is an adapter for postfix postmap commands.
@@ -26,14 +29,14 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		fmt.Println("Error getting payload:", err.Error())
+		log.WithError(err).Error("Error getting payload")
 		_, _ = conn.Write([]byte("400 Error getting payload\n"))
 		return
 	}
 	email := strings.TrimSuffix(payload, "\n")
 	aliases, err := p.client.GetAliases(string(email))
 	if err != nil {
-		fmt.Println("Error fetching aliases:", err.Error())
+		log.WithError(err).WithField("email", email).Error("Error fetching aliases")
 		_, _ = conn.Write([]byte("400 Error fetching aliases\n"))
 		return
 	}
@@ -54,7 +57,7 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		fmt.Println("Error getting payload:", err.Error())
+		log.WithError(err).Error("Error getting payload")
 		_, _ = conn.Write([]byte("400 Error getting payload\n"))
 		return
 	}
@@ -62,7 +65,7 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 	domain := strings.TrimSuffix(payload, "\n")
 	exists, err := p.client.GetDomain(string(domain))
 	if err != nil {
-		fmt.Println("Error fetching domain:", err.Error())
+		log.WithError(err).WithField("domain", domain).Error("Error fetching domain")
 		_, _ = conn.Write([]byte("400 Error fetching domain\n"))
 		return
 	}
@@ -83,7 +86,7 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		fmt.Println("Error getting payload:", err.Error())
+		log.WithError(err).Error("Error getting payload")
 		_, _ = conn.Write([]byte("400 Error getting payload\n"))
 		return
 	}
@@ -91,7 +94,7 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 	email := strings.TrimSuffix(payload, "\n")
 	exists, err := p.client.GetMailbox(string(email))
 	if err != nil {
-		fmt.Println("Error fetching mailbox:", err.Error())
+		log.WithError(err).WithField("email", email).Error("Error fetching mailbox")
 		_, _ = conn.Write([]byte("400 Error fetching mailbox\n"))
 		return
 	}
@@ -112,7 +115,7 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 
 	payload, err := p.payload(conn)
 	if err != nil {
-		fmt.Println("Error getting payload:", err.Error())
+		log.WithError(err).Error("Error getting payload")
 		_, _ = conn.Write([]byte("400 Error getting payload\n"))
 		return
 	}
@@ -120,7 +123,7 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 	email := strings.TrimSuffix(payload, "\n")
 	senders, err := p.client.GetSenders(string(email))
 	if err != nil {
-		fmt.Println("Error fetching senders:", err.Error())
+		log.WithError(err).WithField("email", email).Error("Error fetching senders")
 		_, _ = conn.Write([]byte("400 Error fetching senders\n"))
 		return
 	}
@@ -145,7 +148,7 @@ func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
 	data = bytes.Trim(data, "\x00")
 	parts := strings.Split(string(data), " ")
 	if len(parts) < 2 || parts[0] != "get" {
-		return "", fmt.Errorf("invalid command")
+		return "", errors.New("invalid or unsupported command")
 	}
 
 	return parts[1], nil
