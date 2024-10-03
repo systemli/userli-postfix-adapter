@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"testing"
 
@@ -11,6 +12,10 @@ import (
 
 type ConfigTestSuite struct {
 	suite.Suite
+}
+
+func (s *ConfigTestSuite) SetupTest() {
+	log.SetOutput(io.Discard)
 }
 
 func (s *ConfigTestSuite) TestNewConfig() {
@@ -35,6 +40,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":10002", config.DomainListenAddr)
 		s.Equal(":10003", config.MailboxListenAddr)
 		s.Equal(":10004", config.SendersListenAddr)
+		s.Equal(":10005", config.MetricsListenAddr)
 	})
 
 	s.Run("custom config", func() {
@@ -44,6 +50,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		os.Setenv("DOMAIN_LISTEN_ADDR", ":20002")
 		os.Setenv("MAILBOX_LISTEN_ADDR", ":20003")
 		os.Setenv("SENDERS_LISTEN_ADDR", ":20004")
+		os.Setenv("METRICS_LISTEN_ADDR", ":20005")
 
 		config := NewConfig()
 
@@ -53,6 +60,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":20002", config.DomainListenAddr)
 		s.Equal(":20003", config.MailboxListenAddr)
 		s.Equal(":20004", config.SendersListenAddr)
+		s.Equal(":20005", config.MetricsListenAddr)
 	})
 }
 
