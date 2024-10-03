@@ -43,3 +43,6 @@ jobs:
 
       - name: Build
         run: go build
+
+      - name: Docker Build
+        run: docker build .
