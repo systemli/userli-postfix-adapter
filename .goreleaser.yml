@@ -1,0 +1,31 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    goos:
+      - linux
+      - darwin
+    goarm:
+      - "6"
+      - "7"
+    ldflags:
+      - -s -w
+dockers:
+  - goos: linux
+    goarch: amd64
+    image_templates:
+      - "systemli/userli-postfix-adapter:{{ .Tag }}"
+      - "systemli/userli-postfix-adapter:{{ .Major }}"
+      - "systemli/userli-postfix-adapter:{{ .Major }}.{{ .Minor }}"
+      - "systemli/userli-postfix-adapter:latest"
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  disable: true
