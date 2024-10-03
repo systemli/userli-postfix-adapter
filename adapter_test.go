@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
+	"log"
 	"math/big"
 	"net"
 	"sync"
@@ -23,6 +25,8 @@ type AdapterTestSuite struct {
 func (s *AdapterTestSuite) SetupTest() {
 	s.wg = &sync.WaitGroup{}
 	s.ctx = context.Background()
+
+	log.SetOutput(io.Discard)
 }
 
 func (s *AdapterTestSuite) AfterTest(_, _ string) {

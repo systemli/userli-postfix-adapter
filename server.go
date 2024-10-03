@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 )
 
 func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler func(net.Conn)) {
@@ -12,7 +13,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		fmt.Println("Error creating listener:", err.Error())
+		log.WithError(err).Error("Error creating listener")
 		return
 	}
 	defer listener.Close()
@@ -22,14 +23,16 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 		listener.Close()
 	}()
 
+	log.Info("Server started on ", addr)
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				fmt.Println("Server stopped on port ", addr)
+				log.Info("Server stopped on port ", addr)
 				return
 			}
-			fmt.Println("Error accepting connection:", err.Error())
+			log.WithError(err).Error("Error accepting connection")
 			continue
 		}
 
