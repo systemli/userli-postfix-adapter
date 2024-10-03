@@ -25,6 +25,9 @@ type Config struct {
 
 	// SendersListenAddr is the address to listen for senders requests.
 	SendersListenAddr string
+
+	// MetricsListenAddr is the address to listen for metrics requests.
+	MetricsListenAddr string
 }
 
 // NewConfig creates a new Config with default values.
@@ -81,6 +84,11 @@ func NewConfig() *Config {
 		sendersListenAddr = ":10004"
 	}
 
+	metricsListenAddr := os.Getenv("METRICS_LISTEN_ADDR")
+	if metricsListenAddr == "" {
+		metricsListenAddr = ":10005"
+	}
+
 	return &Config{
 		UserliBaseURL:     userliBaseURL,
 		UserliToken:       userliToken,
@@ -88,5 +96,6 @@ func NewConfig() *Config {
 		DomainListenAddr:  domainListenAddr,
 		MailboxListenAddr: mailboxListenAddr,
 		SendersListenAddr: sendersListenAddr,
+		MetricsListenAddr: metricsListenAddr,
 	}
 }
