@@ -4,7 +4,7 @@ go 1.23.1
 
 require (
 	github.com/h2non/gock v1.2.0
-	github.com/prometheus/client_golang v1.20.4
+	github.com/prometheus/client_golang v1.20.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 )
