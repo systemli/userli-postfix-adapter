@@ -45,7 +45,7 @@ func (s *AdapterTestSuite) TestAliasHandler() {
 
 	adapter := NewPostfixAdapter(userli)
 
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.AliasHandler)
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.AliasHandler, 1)
 
 	// wait until the server is ready
 	for {
@@ -116,7 +116,7 @@ func (s *AdapterTestSuite) TestDomainHandler() {
 
 	adapter := NewPostfixAdapter(userli)
 
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.DomainHandler)
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.DomainHandler, 1)
 
 	// wait until the server is ready
 	for {
@@ -188,7 +188,7 @@ func (s *AdapterTestSuite) TestMailboxHandler() {
 
 	adapter := NewPostfixAdapter(userli)
 
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.MailboxHandler)
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.MailboxHandler, 1)
 
 	// wait until the server is ready
 	for {
@@ -261,7 +261,7 @@ func (s *AdapterTestSuite) TestSendersHandler() {
 
 	adapter := NewPostfixAdapter(userli)
 
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.SendersHandler)
+	go StartTCPServer(s.ctx, s.wg, listen, adapter.SendersHandler, 1)
 
 	// wait until the server is ready
 	for {
