@@ -11,7 +11,11 @@ import (
 func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler func(net.Conn)) {
 	defer wg.Done()
 
-	listener, err := net.Listen("tcp", addr)
+	lc := net.ListenConfig{
+		KeepAlive: -1,
+	}
+
+	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		log.WithError(err).Error("Error creating listener")
 		return
