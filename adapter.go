@@ -57,7 +57,7 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 		return
 	}
 
-	p.write(conn, []byte(fmt.Sprintf("200 %s \n", strings.Join(aliases, ","))), now, "alias", "success")
+	p.write(conn, []byte(fmt.Sprintf("200 %s\n", strings.Join(aliases, ","))), now, "alias", "success")
 }
 
 // DomainHandler handles the get command for domains.
@@ -147,7 +147,7 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 		return
 	}
 
-	p.write(conn, []byte(fmt.Sprintf("200 %s \n", strings.Join(senders, ","))), now, "senders", "success")
+	p.write(conn, []byte(fmt.Sprintf("200 %s\n", strings.Join(senders, ","))), now, "senders", "success")
 }
 
 // payload reads the data from the connection. It checks for valid

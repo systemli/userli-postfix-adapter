@@ -67,7 +67,7 @@ func (s *AdapterTestSuite) TestAliasHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("200 source1@example.com,source2.example.com \n", string(bytes.Trim(response, "\x00")))
+		s.Equal("200 source1@example.com,source2.example.com\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -283,7 +283,7 @@ func (s *AdapterTestSuite) TestSendersHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("200 user@example.com \n", string(bytes.Trim(response, "\x00")))
+		s.Equal("200 user@example.com\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -299,7 +299,7 @@ func (s *AdapterTestSuite) TestSendersHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("200 user1@example.com,user2@example.com \n", string(bytes.Trim(response, "\x00")))
+		s.Equal("200 user1@example.com,user2@example.com\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
