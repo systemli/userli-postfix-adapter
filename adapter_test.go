@@ -67,7 +67,7 @@ func (s *AdapterTestSuite) TestAliasHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("200 source1@example.com,source2.example.com\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("200 source1@example.com%2Csource2.example.com\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -98,7 +98,7 @@ func (s *AdapterTestSuite) TestAliasHandler() {
 		response := make([]byte, 4096)
 		_, err = conn.Read(response)
 		s.NoError(err)
-		s.Equal("400 Error fetching aliases\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("400 Error%20fetching%20aliases\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -170,7 +170,7 @@ func (s *AdapterTestSuite) TestDomainHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("400 Error fetching domain\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("400 Error%20fetching%20domain\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -242,7 +242,7 @@ func (s *AdapterTestSuite) TestMailboxHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("400 Error fetching mailbox\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("400 Error%20fetching%20mailbox\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -299,7 +299,7 @@ func (s *AdapterTestSuite) TestSendersHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("200 user1@example.com,user2@example.com\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("200 user1@example.com%2Cuser2@example.com\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
@@ -315,7 +315,7 @@ func (s *AdapterTestSuite) TestSendersHandler() {
 		_, err = conn.Read(response)
 		s.NoError(err)
 
-		s.Equal("400 Error fetching senders\n", string(bytes.Trim(response, "\x00")))
+		s.Equal("400 Error%20fetching%20senders\n", string(bytes.Trim(response, "\x00")))
 
 		conn.Close()
 	})
