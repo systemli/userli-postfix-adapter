@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,10 @@ func NewUserli(token, baseURL string) *Userli {
 }
 
 func (u *Userli) GetAliases(email string) ([]string, error) {
+	if !strings.Contains(email, "@") {
+		return []string{}, nil
+	}
+
 	resp, err := u.call(fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email))
 	if err != nil {
 		return []string{}, err
@@ -60,6 +65,10 @@ func (u *Userli) GetDomain(domain string) (bool, error) {
 }
 
 func (u *Userli) GetMailbox(email string) (bool, error) {
+	if !strings.Contains(email, "@") {
+		return false, nil
+	}
+
 	resp, err := u.call(fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, email))
 	if err != nil {
 		return false, err
@@ -75,6 +84,10 @@ func (u *Userli) GetMailbox(email string) (bool, error) {
 }
 
 func (u *Userli) GetSenders(email string) ([]string, error) {
+	if !strings.Contains(email, "@") {
+		return []string{}, nil
+	}
+
 	resp, err := u.call(fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, email))
 	if err != nil {
 		return []string{}, err

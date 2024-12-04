@@ -37,6 +37,12 @@ func (s *UserliTestSuite) TestGetAliases() {
 		s.Equal([]string{"source1@example.com", "source2@example.com"}, aliases)
 	})
 
+	s.Run("no email", func() {
+		aliases, err := s.userli.GetAliases("alias")
+		s.NoError(err)
+		s.Empty(aliases)
+	})
+
 	s.Run("error", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/alias/alias@example.com").
@@ -120,6 +126,12 @@ func (s *UserliTestSuite) TestGetMailbox() {
 		s.True(gock.IsDone())
 	})
 
+	s.Run("no email", func() {
+		active, err := s.userli.GetMailbox("user")
+		s.NoError(err)
+		s.False(active)
+	})
+
 	s.Run("not found", func() {
 		gock.New("http://localhost:8000").
 			Get("/api/postfix/mailbox/user@example.org").
@@ -168,6 +180,12 @@ func (s *UserliTestSuite) TestGetSenders() {
 		s.NoError(err)
 		s.Equal([]string{"user@example.com"}, senders)
 		s.True(gock.IsDone())
+	})
+
+	s.Run("no email", func() {
+		senders, err := s.userli.GetSenders("user")
+		s.NoError(err)
+		s.Empty(senders)
 	})
 
 	s.Run("alias success", func() {
