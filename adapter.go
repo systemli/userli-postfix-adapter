@@ -13,12 +13,30 @@ import (
 )
 
 const (
-	ErrPayloadError = "Error getting payload"
-	ErrAPIError     = "Error fetching data"
+	StatusOK       Status = 200
+	StatusError    Status = 400
+	StatusNoResult Status = 500
 
-	ResponseNoResult     = "500 NO%20RESULT\n"
-	ResponsePayloadError = "500 PAYLOAD%20ERROR\n"
+	ResponseNoResult     string = "NO RESULT"
+	ResponsePayloadError string = "PAYLOAD ERROR"
+
+	ErrPayloadError string = "Error getting payload"
+	ErrAPIError     string = "Error fetching data"
 )
+
+// Status is the status code for the response.
+type Status int
+
+// Response is the response to a postfix command.
+type Response struct {
+	Status   Status
+	Response string
+}
+
+// String returns the response as a string.
+func (r *Response) String() string {
+	return fmt.Sprintf("%d %s\n", r.Status, strings.ReplaceAll(r.Response, " ", "%20"))
+}
 
 // PostfixAdapter is an adapter for postfix postmap commands.
 // See https://www.postfix.org/postmap.1.html
@@ -40,22 +58,22 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 	payload, err := p.payload(conn)
 	if err != nil {
 		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, []byte(ResponsePayloadError), now, "alias", "error")
+		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "alias")
 		return
 	}
 	aliases, err := p.client.GetAliases(payload)
 	if err != nil {
 		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, []byte("400 Error fetching aliases\n"), now, "alias", "error")
+		p.write(conn, Response{Status: StatusError, Response: "Error fetching aliases"}, now, "alias")
 		return
 	}
 
 	if len(aliases) == 0 {
-		p.write(conn, []byte(ResponseNoResult), now, "alias", "success")
+		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "alias")
 		return
 	}
 
-	p.write(conn, []byte(fmt.Sprintf("200 %s\n", strings.Join(aliases, ","))), now, "alias", "success")
+	p.write(conn, Response{Status: StatusOK, Response: strings.Join(aliases, ",")}, now, "alias")
 }
 
 // DomainHandler handles the get command for domains.
@@ -67,23 +85,23 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 	payload, err := p.payload(conn)
 	if err != nil {
 		log.WithError(err).Error("Error getting payload")
-		p.write(conn, []byte(ResponsePayloadError), now, "domain", "error")
+		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "domain")
 		return
 	}
 
 	exists, err := p.client.GetDomain(payload)
 	if err != nil {
 		log.WithError(err).WithField("domain", payload).Error(ErrAPIError)
-		p.write(conn, []byte("400 Error fetching domain\n"), now, "domain", "error")
+		p.write(conn, Response{Status: StatusError, Response: "Error fetching domain"}, now, "domain")
 		return
 	}
 
 	if !exists {
-		p.write(conn, []byte(ResponseNoResult), now, "domain", "success")
+		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "domain")
 		return
 	}
 
-	p.write(conn, []byte("200 1\n"), now, "domain", "success")
+	p.write(conn, Response{Status: StatusOK, Response: "1"}, now, "domain")
 }
 
 // MailboxHandler handles the get command for mailboxes.
@@ -95,23 +113,23 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 	payload, err := p.payload(conn)
 	if err != nil {
 		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, []byte(ResponsePayloadError), now, "mailbox", "error")
+		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "mailbox")
 		return
 	}
 
 	exists, err := p.client.GetMailbox(payload)
 	if err != nil {
 		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, []byte("400 Error fetching mailbox\n"), now, "mailbox", "error")
+		p.write(conn, Response{Status: StatusError, Response: "Error fetching mailbox"}, now, "mailbox")
 		return
 	}
 
 	if !exists {
-		p.write(conn, []byte(ResponseNoResult), now, "mailbox", "success")
+		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "mailbox")
 		return
 	}
 
-	p.write(conn, []byte("200 1\n"), now, "mailbox", "success")
+	p.write(conn, Response{Status: StatusOK, Response: "1"}, now, "mailbox")
 }
 
 // SendersHandler handles the get command for senders.
@@ -123,23 +141,23 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 	payload, err := p.payload(conn)
 	if err != nil {
 		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, []byte(ResponsePayloadError), now, "senders", "error")
+		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "senders")
 		return
 	}
 
 	senders, err := p.client.GetSenders(payload)
 	if err != nil {
 		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, []byte("400 Error fetching senders\n"), now, "senders", "error")
+		p.write(conn, Response{Status: StatusError, Response: "Error fetching senders"}, now, "senders")
 		return
 	}
 
 	if len(senders) == 0 {
-		p.write(conn, []byte(ResponseNoResult), now, "senders", "success")
+		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "senders")
 		return
 	}
 
-	p.write(conn, []byte(fmt.Sprintf("200 %s\n", strings.Join(senders, ","))), now, "senders", "success")
+	p.write(conn, Response{Status: StatusOK, Response: strings.Join(senders, ",")}, now, "senders")
 }
 
 // payload reads the data from the connection. It checks for valid
@@ -164,12 +182,20 @@ func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
 	return payload, nil
 }
 
-func (h *PostfixAdapter) write(conn net.Conn, response []byte, now time.Time, handler, status string) {
-	log.WithFields(log.Fields{"response": string(response), "handler": handler, "status": status}).Debug("Writing response")
+func (h *PostfixAdapter) write(conn net.Conn, response Response, now time.Time, handler string) {
+	var status string
+	switch response.Status {
+	case StatusOK:
+		status = "success"
+	default:
+		status = "error"
+	}
 
-	_, err := conn.Write(response)
+	log.WithFields(log.Fields{"response": response.String(), "handler": handler, "status": status}).Debug("Writing response")
+
+	_, err := conn.Write([]byte(response.String()))
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{"response": string(response), "handler": handler, "status": status}).Error("Error writing response")
+		log.WithError(err).WithFields(log.Fields{"response": response.String(), "handler": handler, "status": status}).Error("Error writing response")
 	}
 	requestDurations.With(prometheus.Labels{"handler": handler, "status": status}).Observe(time.Since(now).Seconds())
 }
