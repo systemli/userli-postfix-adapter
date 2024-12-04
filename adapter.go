@@ -35,8 +35,6 @@ func NewPostfixAdapter(client UserliService) *PostfixAdapter {
 // It fetches the destinations for the given alias.
 // The response is a comma separated list of destinations.
 func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
-	defer conn.Close()
-
 	now := time.Now()
 
 	payload, err := p.payload(conn)
@@ -64,8 +62,6 @@ func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
 // It checks if the domain exists.
 // The response is a single line with the status code.
 func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
-	defer conn.Close()
-
 	now := time.Now()
 
 	payload, err := p.payload(conn)
@@ -94,8 +90,6 @@ func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
 // It checks if the mailbox exists.
 // The response is a single line with the status code.
 func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
-	defer conn.Close()
-
 	now := time.Now()
 
 	payload, err := p.payload(conn)
@@ -124,8 +118,6 @@ func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
 // It fetches the senders for the given email.
 // The response is a comma separated list of senders.
 func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
-	defer conn.Close()
-
 	now := time.Now()
 
 	payload, err := p.payload(conn)
