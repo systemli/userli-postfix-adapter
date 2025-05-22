@@ -40,15 +40,6 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 			continue
 		}
 
-		go func() {
-			defer func() {
-				log.Debug("Closing connection")
-				if err := conn.Close(); err != nil {
-					log.WithError(err).Error("Error closing connection")
-				}
-			}()
-
-			handler(conn)
-		}()
+		go handler(conn)
 	}
 }
