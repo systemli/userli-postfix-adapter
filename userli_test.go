@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -14,10 +15,13 @@ type UserliTestSuite struct {
 }
 
 func (s *UserliTestSuite) SetupTest() {
-	s.userli = NewUserli("insecure", "http://localhost:8000")
+	s.userli = NewUserli("insecure", "http://localhost:8000", WithClient(http.DefaultClient))
 
 	gock.DisableNetworking()
-	defer gock.Off()
+}
+
+func (s *UserliTestSuite) TearDownTest() {
+	gock.Off()
 }
 
 func (s *UserliTestSuite) TestGetAliases() {

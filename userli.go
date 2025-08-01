@@ -22,12 +22,67 @@ type Userli struct {
 	Client *http.Client
 }
 
-func NewUserli(token, baseURL string) *Userli {
-	client := &http.Client{
-		Timeout: time.Second * 10,
+// Option defines a functional option for configuring Userli
+type Option func(*Userli)
+
+// WithClient sets a custom HTTP client
+func WithClient(client *http.Client) Option {
+	return func(u *Userli) {
+		u.Client = client
+	}
+}
+
+// WithTransport sets a custom transport (creates a new client with this transport)
+func WithTransport(transport *http.Transport) Option {
+	return func(u *Userli) {
+		u.Client = &http.Client{
+			Transport: transport,
+			Timeout:   time.Second * 10,
+		}
+	}
+}
+
+// WithTimeout sets a custom timeout (modifies the existing client or creates a new one)
+func WithTimeout(timeout time.Duration) Option {
+	return func(u *Userli) {
+		if u.Client == nil {
+			u.Client = &http.Client{Timeout: timeout}
+		} else {
+			u.Client.Timeout = timeout
+		}
+	}
+}
+
+func NewUserli(token, baseURL string, opts ...Option) *Userli {
+	u := &Userli{
+		token:   token,
+		baseURL: baseURL,
 	}
 
-	return &Userli{token: token, baseURL: baseURL, Client: client}
+	// Apply options
+	for _, opt := range opts {
+		opt(u)
+	}
+
+	// Set default client if none was provided
+	if u.Client == nil {
+		transport := &http.Transport{
+			MaxIdleConns:          100,              // Maximum idle connections across all hosts
+			MaxIdleConnsPerHost:   30,               // Maximum idle connections per host
+			MaxConnsPerHost:       100,              // Maximum connections per host
+			IdleConnTimeout:       90 * time.Second, // How long idle connections stay open
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableKeepAlives:     false, // Enable keep-alive
+		}
+
+		u.Client = &http.Client{
+			Transport: transport,
+			Timeout:   time.Second * 10,
+		}
+	}
+
+	return u
 }
 
 func (u *Userli) GetAliases(email string) ([]string, error) {
