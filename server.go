@@ -87,12 +87,10 @@ func handleConnection(conn net.Conn, handler func(net.Conn), semaphore chan stru
 		_ = tcpConn.SetKeepAlivePeriod(KeepAliveTimeout)
 	}
 
-	// Overall connection timeout for the entire session
-	timer := time.AfterFunc(ConnectionTimeout, func() {
-		log.WithField("addr", addr).Debug("Connection timeout, closing")
-		_ = conn.Close()
-	})
-	defer timer.Stop()
+	// Set connection deadline directly - much more efficient than goroutines
+	deadline := time.Now().Add(ConnectionTimeout)
+	_ = conn.SetDeadline(deadline)
 
+	// Execute handler
 	handler(conn)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/suite"
@@ -222,6 +223,98 @@ func (s *UserliTestSuite) TestGetSenders() {
 		s.Error(err)
 		s.Empty(senders)
 		s.True(gock.IsDone())
+	})
+}
+
+func (s *UserliTestSuite) TestWithClient() {
+	s.Run("sets custom client", func() {
+		customClient := &http.Client{}
+		userli := NewUserli("token", "http://localhost", WithClient(customClient))
+
+		userli.mu.RLock()
+		client := userli.Client
+		userli.mu.RUnlock()
+
+		s.Equal(customClient, client)
+	})
+}
+
+func (s *UserliTestSuite) TestWithTransport() {
+	s.Run("sets custom transport", func() {
+		customTransport := &http.Transport{}
+		userli := NewUserli("token", "http://localhost", WithTransport(customTransport))
+
+		userli.mu.RLock()
+		transport := userli.Client.Transport
+		userli.mu.RUnlock()
+
+		s.Equal(customTransport, transport)
+		s.Equal(10*time.Second, userli.Client.Timeout) // 10 seconds in nanoseconds
+	})
+}
+
+func (s *UserliTestSuite) TestWithTimeout() {
+	s.Run("sets custom timeout with new client", func() {
+		timeout := 30 * 1000000000 // 30 seconds in nanoseconds
+		userli := NewUserli("token", "http://localhost", WithTimeout(30*1000000000))
+
+		userli.mu.RLock()
+		clientTimeout := userli.Client.Timeout
+		userli.mu.RUnlock()
+
+		s.Equal(timeout, int(clientTimeout))
+		s.NotNil(userli.Client.Transport)
+	})
+
+	s.Run("preserves existing transport", func() {
+		customTransport := &http.Transport{}
+		userli := NewUserli("token", "http://localhost",
+			WithTransport(customTransport),
+			WithTimeout(20*time.Second)) // 20 seconds
+
+		userli.mu.RLock()
+		transport := userli.Client.Transport
+		timeout := userli.Client.Timeout
+		userli.mu.RUnlock()
+
+		s.Equal(customTransport, transport)
+		s.Equal(20*time.Second, timeout)
+	})
+}
+
+func (s *UserliTestSuite) TestConcurrentOptions() {
+	s.Run("thread safety", func() {
+		userli := NewUserli("token", "http://localhost")
+
+		// Test concurrent option applications
+		done := make(chan bool, 3)
+
+		go func() {
+			WithTimeout(15 * time.Second)(userli) // 15 seconds
+			done <- true
+		}()
+
+		go func() {
+			WithClient(&http.Client{})(userli)
+			done <- true
+		}()
+
+		go func() {
+			WithTransport(&http.Transport{})(userli)
+			done <- true
+		}()
+
+		// Wait for all goroutines to complete
+		<-done
+		<-done
+		<-done
+
+		// Verify client is set and accessible
+		userli.mu.RLock()
+		client := userli.Client
+		userli.mu.RUnlock()
+
+		s.NotNil(client)
 	})
 }
 
