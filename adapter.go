@@ -183,6 +183,8 @@ func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
 // payload reads the data from the connection. It checks for valid
 // commands sent by postfix and returns the payload.
 func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
 	data := make([]byte, 4096)
 	_, err := conn.Read(data)
 	if err != nil {
@@ -212,6 +214,8 @@ func (h *PostfixAdapter) write(conn net.Conn, response Response, now time.Time, 
 	}
 
 	log.WithFields(log.Fields{"response": response.String(), "handler": handler, "status": status}).Debug("Writing response")
+
+	_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 
 	_, err := conn.Write([]byte(response.String()))
 	if err != nil {
