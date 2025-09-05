@@ -4,6 +4,9 @@ services:
     hostname: adapter
     image: systemli/userli-postfix-adapter
     build: .
+    ports:
+      - "10001:10001"
+      - "10002:10002"
     env_file:
       - .env
     networks:
@@ -15,10 +18,10 @@ services:
     environment:
       RELAYHOST: "[mailcatcher]:1025"
       ALLOWED_SENDER_DOMAINS: "example.org example.com"
-      POSTFIX_virtual_alias_maps: "tcp:adapter:10001"
-      POSTFIX_virtual_mailbox_domains: "tcp:adapter:10002"
-      POSTFIX_virtual_mailbox_maps: "tcp:adapter:10003"
-      POSTFIX_smtpd_sender_login_maps: "tcp:adapter:10004"
+      POSTFIX_virtual_alias_maps: "socketmap:inet:adapter:10001:alias"
+      POSTFIX_virtual_mailbox_domains: "socketmap:inet:adapter:10001:domain"
+      POSTFIX_virtual_mailbox_maps: "socketmap:inet:adapter:10001:mailbox"
+      POSTFIX_smtpd_sender_login_maps: "socketmap:inet:adapter:10001:senders"
     networks:
       - userli
 

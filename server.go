@@ -11,13 +11,13 @@ import (
 
 const (
 	MaxConcurrentConnections = 500              // Limit concurrent connections
-	ConnectionTimeout        = 30 * time.Second // Overall connection timeout
+	ConnectionTimeout        = 60 * time.Second // Connection timeout
+	KeepAliveTimeout         = 60 * time.Second // TCP Keep-Alive timeout
 	ReadTimeout              = 10 * time.Second // Read operation timeout
 	WriteTimeout             = 10 * time.Second // Write operation timeout
-	KeepAliveTimeout         = 15 * time.Second // TCP Keep-Alive timeout
 )
 
-func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handler func(net.Conn)) {
+func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, adapter *SocketmapAdapter) {
 	defer wg.Done()
 
 	// Connection pool with semaphore pattern
@@ -32,7 +32,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 
 	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		log.WithError(err).WithField("addr", addr).Error("Failed to create listener")
+		log.WithError(err).WithField("addr", addr).Error("Failed to create socketmap listener")
 		return
 	}
 	defer listener.Close()
@@ -40,15 +40,15 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 	// Graceful shutdown handler
 	go func() {
 		<-ctx.Done()
-		log.WithField("addr", addr).Info("Shutting down server...")
+		log.WithField("addr", addr).Info("Shutting down socketmap server...")
 		listener.Close()
 
 		// Wait for active connections to finish
 		activeConnections.Wait()
-		log.WithField("addr", addr).Info("All connections closed")
+		log.WithField("addr", addr).Info("All socketmap connections closed")
 	}()
 
-	log.WithField("addr", addr).Info("TCP server started")
+	log.WithField("addr", addr).Info("Socketmap server started")
 
 	for {
 		conn, err := listener.Accept()
@@ -65,16 +65,16 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, addr string, handle
 		case connSemaphore <- struct{}{}:
 			// Connection slot acquired
 			activeConnections.Add(1)
-			go handleConnection(conn, handler, connSemaphore, &activeConnections, addr)
+			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnections, addr)
 		default:
 			// Connection pool full, reject connection
-			log.WithField("addr", addr).Warn("Connection pool full, rejecting connection")
+			log.WithField("addr", addr).Warn("Connection pool full, rejecting socketmap connection")
 			conn.Close()
 		}
 	}
 }
 
-func handleConnection(conn net.Conn, handler func(net.Conn), semaphore chan struct{}, wg *sync.WaitGroup, addr string) {
+func handleSocketmapConnection(conn net.Conn, adapter *SocketmapAdapter, semaphore chan struct{}, wg *sync.WaitGroup, addr string) {
 	defer func() {
 		_ = conn.Close()
 		<-semaphore // Release connection slot
@@ -87,10 +87,10 @@ func handleConnection(conn net.Conn, handler func(net.Conn), semaphore chan stru
 		_ = tcpConn.SetKeepAlivePeriod(KeepAliveTimeout)
 	}
 
-	// Set connection deadline directly - much more efficient than goroutines
+	// Set connection deadline - socketmap supports persistent connections
 	deadline := time.Now().Add(ConnectionTimeout)
 	_ = conn.SetDeadline(deadline)
 
-	// Execute handler
-	handler(conn)
+	// Execute socketmap handler (handles multiple requests per connection)
+	adapter.HandleConnection(conn)
 }
