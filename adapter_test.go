@@ -2,341 +2,410 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"crypto/rand"
 	"errors"
-	"io"
-	"log"
-	"math/big"
 	"net"
-	"sync"
+	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/suite"
+	"time"
 )
 
-type AdapterTestSuite struct {
-	suite.Suite
-
-	ctx context.Context
-	wg  *sync.WaitGroup
+// Mock connection for testing
+type MockConn struct {
+	readBuffer  *bytes.Buffer
+	writeBuffer *bytes.Buffer
+	closed      bool
 }
 
-func (s *AdapterTestSuite) SetupTest() {
-	s.wg = &sync.WaitGroup{}
-	s.ctx = context.Background()
-
-	log.SetOutput(io.Discard)
+func NewMockConn(input string) *MockConn {
+	return &MockConn{
+		readBuffer:  bytes.NewBufferString(input),
+		writeBuffer: &bytes.Buffer{},
+	}
 }
 
-func (s *AdapterTestSuite) AfterTest(_, _ string) {
-	s.ctx.Done()
+func (m *MockConn) Read(b []byte) (n int, err error) {
+	return m.readBuffer.Read(b)
 }
 
-func (s *AdapterTestSuite) TestAliasHandler() {
-	userli := new(MockUserliService)
-	userli.On("GetAliases", "alias@example.com").Return([]string{"source1@example.com", "source2.example.com"}, nil)
-	userli.On("GetAliases", "noalias@example.com").Return([]string{}, nil)
-	userli.On("GetAliases", "error@example.com").Return([]string{}, errors.New("error"))
+func (m *MockConn) Write(b []byte) (n int, err error) {
+	return m.writeBuffer.Write(b)
+}
 
-	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
-	portNumber.Add(portNumber, big.NewInt(20000))
-	listen := ":" + portNumber.String()
+func (m *MockConn) Close() error {
+	m.closed = true
+	return nil
+}
 
-	adapter := NewPostfixAdapter(userli)
+func (m *MockConn) LocalAddr() net.Addr                { return nil }
+func (m *MockConn) RemoteAddr() net.Addr               { return nil }
+func (m *MockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *MockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *MockConn) SetWriteDeadline(t time.Time) error { return nil }
 
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.AliasHandler)
+func (m *MockConn) GetWritten() string {
+	return m.writeBuffer.String()
+}
 
-	// wait until the server is ready
-	for {
-		conn, err := net.Dial("tcp", listen)
-		if err == nil {
-			conn.Close()
-			break
-		}
+func TestSocketmapResponse_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		response SocketmapResponse
+		expected string
+	}{
+		{
+			name:     "OK with data",
+			response: SocketmapResponse{Status: "OK", Data: "test@example.com"},
+			expected: "OK test@example.com",
+		},
+		{
+			name:     "NOTFOUND without data",
+			response: SocketmapResponse{Status: "NOTFOUND", Data: ""},
+			expected: "NOTFOUND",
+		},
+		{
+			name:     "TEMP with error message",
+			response: SocketmapResponse{Status: "TEMP", Data: "Service unavailable"},
+			expected: "TEMP Service unavailable",
+		},
 	}
 
-	s.Run("success", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get alias@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("200 source1@example.com,source2.example.com\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("empty result", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get noalias@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("error", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get error@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-		s.Equal("400 Error%20fetching%20aliases\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.response.String()
+			if result != tt.expected {
+				t.Errorf("String() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
 }
 
-func (s *AdapterTestSuite) TestDomainHandler() {
-	userli := new(MockUserliService)
-	userli.On("GetDomain", "example.com").Return(true, nil)
-	userli.On("GetDomain", "notfound.com").Return(false, nil)
-	userli.On("GetDomain", "error.com").Return(false, errors.New("error"))
-
-	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
-	portNumber.Add(portNumber, big.NewInt(20000))
-	listen := ":" + portNumber.String()
-
-	adapter := NewPostfixAdapter(userli)
-
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.DomainHandler)
-
-	// wait until the server is ready
-	for {
-		conn, err := net.Dial("tcp", listen)
-		if err == nil {
-			conn.Close()
-			break
-		}
+func TestSocketmapAdapter_handleAlias(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		setup    func(*MockUserliService)
+		expected SocketmapResponse
+	}{
+		{
+			name: "existing alias",
+			key:  "alias@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetAliases", "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
+			},
+			expected: SocketmapResponse{Status: "OK", Data: "user1@example.com,user2@example.com"},
+		},
+		{
+			name: "non-existing alias",
+			key:  "nonexistent@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetAliases", "nonexistent@example.com").Return([]string{}, nil)
+			},
+			expected: SocketmapResponse{Status: "NOTFOUND"},
+		},
+		{
+			name: "service error",
+			key:  "error@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetAliases", "error@example.com").Return([]string{}, errors.New("service error"))
+			},
+			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"},
+		},
 	}
 
-	s.Run("success", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockUserliService{}
+			tt.setup(mock)
+			adapter := NewSocketmapAdapter(mock)
 
-		_, err = conn.Write([]byte("get example.com"))
-		s.NoError(err)
+			result := adapter.handleAlias(tt.key)
 
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("200 1\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("not found", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get notfound.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("error", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get error.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("400 Error%20fetching%20domain\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
+			if result.Status != tt.expected.Status {
+				t.Errorf("handleAlias() status = %q, want %q", result.Status, tt.expected.Status)
+			}
+			if result.Data != tt.expected.Data {
+				t.Errorf("handleAlias() data = %q, want %q", result.Data, tt.expected.Data)
+			}
+			mock.AssertExpectations(t)
+		})
+	}
 }
 
-func (s *AdapterTestSuite) TestMailboxHandler() {
-	userli := new(MockUserliService)
-	userli.On("GetMailbox", "user@example.org").Return(true, nil)
-	userli.On("GetMailbox", "nonexisting@example.org").Return(false, nil)
-	userli.On("GetMailbox", "error@example.org").Return(false, errors.New("error"))
-
-	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
-	portNumber.Add(portNumber, big.NewInt(20000))
-	listen := ":" + portNumber.String()
-
-	adapter := NewPostfixAdapter(userli)
-
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.MailboxHandler)
-
-	// wait until the server is ready
-	for {
-		conn, err := net.Dial("tcp", listen)
-		if err == nil {
-			conn.Close()
-			break
-		}
+func TestSocketmapAdapter_handleDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		setup    func(*MockUserliService)
+		expected SocketmapResponse
+	}{
+		{
+			name: "existing domain",
+			key:  "example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetDomain", "example.com").Return(true, nil)
+			},
+			expected: SocketmapResponse{Status: "OK", Data: "1"},
+		},
+		{
+			name: "non-existing domain",
+			key:  "nonexistent.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetDomain", "nonexistent.com").Return(false, nil)
+			},
+			expected: SocketmapResponse{Status: "NOTFOUND"},
+		},
+		{
+			name: "service error",
+			key:  "error.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetDomain", "error.com").Return(false, errors.New("service error"))
+			},
+			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"},
+		},
 	}
 
-	s.Run("success", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockUserliService{}
+			tt.setup(mock)
+			adapter := NewSocketmapAdapter(mock)
 
-		_, err = conn.Write([]byte("get user@example.org"))
-		s.NoError(err)
+			result := adapter.handleDomain(tt.key)
 
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("200 1\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("not found", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get nonexisting@example.org"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("error", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get error@example.org"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("400 Error%20fetching%20mailbox\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
+			if result.Status != tt.expected.Status {
+				t.Errorf("handleDomain() status = %q, want %q", result.Status, tt.expected.Status)
+			}
+			if result.Data != tt.expected.Data {
+				t.Errorf("handleDomain() data = %q, want %q", result.Data, tt.expected.Data)
+			}
+			mock.AssertExpectations(t)
+		})
+	}
 }
 
-func (s *AdapterTestSuite) TestSendersHandler() {
-	userli := new(MockUserliService)
-	userli.On("GetSenders", "user@example.com").Return([]string{"user@example.com"}, nil)
-	userli.On("GetSenders", "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
-	userli.On("GetSenders", "error@example.com").Return([]string{}, errors.New("error"))
-	userli.On("GetSenders", "nonexisting@example.com").Return([]string{}, nil)
-
-	portNumber, _ := rand.Int(rand.Reader, big.NewInt(65535-20000))
-	portNumber.Add(portNumber, big.NewInt(20000))
-	listen := ":" + portNumber.String()
-
-	adapter := NewPostfixAdapter(userli)
-
-	go StartTCPServer(s.ctx, s.wg, listen, adapter.SendersHandler)
-
-	// wait until the server is ready
-	for {
-		conn, err := net.Dial("tcp", listen)
-		if err == nil {
-			conn.Close()
-			break
-		}
+func TestSocketmapAdapter_handleMailbox(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		setup    func(*MockUserliService)
+		expected SocketmapResponse
+	}{
+		{
+			name: "existing mailbox",
+			key:  "user@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetMailbox", "user@example.com").Return(true, nil)
+			},
+			expected: SocketmapResponse{Status: "OK", Data: "1"},
+		},
+		{
+			name: "non-existing mailbox",
+			key:  "nonexistent@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetMailbox", "nonexistent@example.com").Return(false, nil)
+			},
+			expected: SocketmapResponse{Status: "NOTFOUND"},
+		},
+		{
+			name: "service error",
+			key:  "error@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetMailbox", "error@example.com").Return(false, errors.New("service error"))
+			},
+			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"},
+		},
 	}
 
-	s.Run("success", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockUserliService{}
+			tt.setup(mock)
+			adapter := NewSocketmapAdapter(mock)
 
-		_, err = conn.Write([]byte("get user@example.com"))
-		s.NoError(err)
+			result := adapter.handleMailbox(tt.key)
 
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("200 user@example.com\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("alias success", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get alias@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("200 user1@example.com,user2@example.com\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("error", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get error@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("400 Error%20fetching%20senders\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
-
-	s.Run("empty result", func() {
-		conn, err := net.Dial("tcp", listen)
-		s.NoError(err)
-
-		_, err = conn.Write([]byte("get nonexisting@example.com"))
-		s.NoError(err)
-
-		response := make([]byte, 4096)
-		_, err = conn.Read(response)
-		s.NoError(err)
-
-		s.Equal("500 NO%20RESULT\n", string(bytes.Trim(response, "\x00")))
-
-		conn.Close()
-	})
+			if result.Status != tt.expected.Status {
+				t.Errorf("handleMailbox() status = %q, want %q", result.Status, tt.expected.Status)
+			}
+			if result.Data != tt.expected.Data {
+				t.Errorf("handleMailbox() data = %q, want %q", result.Data, tt.expected.Data)
+			}
+			mock.AssertExpectations(t)
+		})
+	}
 }
 
-func TestAdapterTestSuite(t *testing.T) {
-	suite.Run(t, new(AdapterTestSuite))
+func TestSocketmapAdapter_handleSenders(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		setup    func(*MockUserliService)
+		expected SocketmapResponse
+	}{
+		{
+			name: "existing senders",
+			key:  "user@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetSenders", "user@example.com").Return([]string{"sender1@example.com", "sender2@example.com"}, nil)
+			},
+			expected: SocketmapResponse{Status: "OK", Data: "sender1@example.com,sender2@example.com"},
+		},
+		{
+			name: "no senders",
+			key:  "nosenders@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetSenders", "nosenders@example.com").Return([]string{}, nil)
+			},
+			expected: SocketmapResponse{Status: "NOTFOUND"},
+		},
+		{
+			name: "service error",
+			key:  "error@example.com",
+			setup: func(m *MockUserliService) {
+				m.On("GetSenders", "error@example.com").Return([]string{}, errors.New("service error"))
+			},
+			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockUserliService{}
+			tt.setup(mock)
+			adapter := NewSocketmapAdapter(mock)
+
+			result := adapter.handleSenders(tt.key)
+
+			if result.Status != tt.expected.Status {
+				t.Errorf("handleSenders() status = %q, want %q", result.Status, tt.expected.Status)
+			}
+			if result.Data != tt.expected.Data {
+				t.Errorf("handleSenders() data = %q, want %q", result.Data, tt.expected.Data)
+			}
+			mock.AssertExpectations(t)
+		})
+	}
+}
+
+func TestSocketmapAdapter_HandleConnection(t *testing.T) {
+	tests := []struct {
+		name           string
+		requests       []string
+		setup          func(*MockUserliService)
+		expectedCount  int
+		expectedOutput []string
+	}{
+		{
+			name:     "single alias request",
+			requests: []string{"22:alias test@example.com,"},
+			setup: func(m *MockUserliService) {
+				m.On("GetAliases", "test@example.com").Return([]string{"dest@example.com"}, nil)
+			},
+			expectedCount:  1,
+			expectedOutput: []string{"19:OK dest@example.com,"},
+		},
+		{
+			name:     "single domain request",
+			requests: []string{"18:domain example.com,"},
+			setup: func(m *MockUserliService) {
+				m.On("GetDomain", "example.com").Return(true, nil)
+			},
+			expectedCount:  1,
+			expectedOutput: []string{"4:OK 1,"},
+		},
+		{
+			name:           "invalid request format",
+			requests:       []string{"10:invalidreq,"},
+			setup:          func(m *MockUserliService) {},
+			expectedCount:  1,
+			expectedOutput: []string{"27:PERM Invalid request format,"},
+		},
+		{
+			name:           "unknown map name",
+			requests:       []string{"24:unknown test@example.com,"},
+			setup:          func(m *MockUserliService) {},
+			expectedCount:  1,
+			expectedOutput: []string{"21:PERM Unknown map name,"},
+		},
+		{
+			name: "multiple requests",
+			requests: []string{
+				"22:alias test@example.com,",
+				"18:domain example.com,",
+			},
+			setup: func(m *MockUserliService) {
+				m.On("GetAliases", "test@example.com").Return([]string{"dest@example.com"}, nil)
+				m.On("GetDomain", "example.com").Return(true, nil)
+			},
+			expectedCount: 2,
+			expectedOutput: []string{
+				"19:OK dest@example.com,",
+				"4:OK 1,",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockUserliService{}
+			tt.setup(mock)
+			adapter := NewSocketmapAdapter(mock)
+
+			// Create input with all requests
+			input := strings.Join(tt.requests, "")
+			conn := NewMockConn(input)
+
+			// Handle the connection
+			adapter.HandleConnection(conn)
+
+			// Check if connection was closed
+			if !conn.closed {
+				t.Error("Connection should be closed after handling")
+			}
+
+			// Parse the output
+			output := conn.GetWritten()
+
+			// For single response tests, check exact match
+			if len(tt.expectedOutput) == 1 && len(tt.requests) == 1 {
+				if output != tt.expectedOutput[0] {
+					t.Errorf("HandleConnection() output = %q, want %q", output, tt.expectedOutput[0])
+				}
+			} else {
+				// For multiple responses, check that all expected outputs are present
+				for _, expected := range tt.expectedOutput {
+					if !strings.Contains(output, expected) {
+						t.Errorf("HandleConnection() output missing expected response %q in %q", expected, output)
+					}
+				}
+			}
+
+			// Only verify mock expectations for tests that should call the mock
+			if strings.Contains(tt.name, "alias") || strings.Contains(tt.name, "domain") || strings.Contains(tt.name, "multiple") {
+				mock.AssertExpectations(t)
+			}
+		})
+	}
+}
+
+func TestSocketmapAdapter_HandleConnection_InvalidNetstring(t *testing.T) {
+	mock := &MockUserliService{}
+	adapter := NewSocketmapAdapter(mock)
+
+	// Invalid netstring (missing colon)
+	conn := NewMockConn("5hello,")
+
+	// Handle the connection - should exit gracefully on decode error
+	adapter.HandleConnection(conn)
+
+	// Check if connection was closed
+	if !conn.closed {
+		t.Error("Connection should be closed after handling invalid netstring")
+	}
+
+	// Should have no output since the decode failed
+	output := conn.GetWritten()
+	if output != "" {
+		t.Errorf("HandleConnection() with invalid netstring should produce no output, got %q", output)
+	}
 }
