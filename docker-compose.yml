@@ -1,13 +1,59 @@
 ---
 services:
   adapter:
+    hostname: adapter
     image: systemli/userli-postfix-adapter
     build: .
-    ports:
-      - "10001:10001"
-      - "10002:10002"
-      - "10003:10003"
-      - "10004:10004"
-      - "10005:10005"
     env_file:
       - .env
+    networks:
+      - userli
+
+  postfix:
+    hostname: postfix
+    image: boky/postfix:latest
+    environment:
+      RELAYHOST: "[mailcatcher]:1025"
+      ALLOWED_SENDER_DOMAINS: "example.org example.com"
+      POSTFIX_virtual_alias_maps: "tcp:adapter:10001"
+      POSTFIX_virtual_mailbox_domains: "tcp:adapter:10002"
+      POSTFIX_virtual_mailbox_maps: "tcp:adapter:10003"
+      POSTFIX_smtpd_sender_login_maps: "tcp:adapter:10004"
+    networks:
+      - userli
+
+  mailcatcher:
+    hostname: mailcatcher
+    image: schickling/mailcatcher:latest
+    ports:
+      - "1025:1025" # SMTP port for testing
+      - "1080:1080" # Web UI to view caught emails
+    networks:
+      - userli
+
+  userli:
+    hostname: userli
+    image: docker.io/systemli/userli:latest
+    ports:
+      - 8000:80
+    networks:
+      - userli
+
+  mariadb:
+    hostname: mariadb
+    image: docker.io/mariadb:10.11
+    environment:
+      MYSQL_USER: mail
+      MYSQL_PASSWORD: password
+      MYSQL_DATABASE: mail
+      MARIADB_RANDOM_ROOT_PASSWORD: 1
+    volumes:
+      - mariadb:/var/lib/mysql
+    networks:
+      - userli
+
+networks:
+  userli:
+
+volumes:
+  mariadb:
