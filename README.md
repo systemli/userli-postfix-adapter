@@ -25,6 +25,21 @@ virtual_mailbox_maps = tcp:localhost:10003
 smtpd_sender_login_maps = tcp:localhost:10004
 ```
 
+## Docker
+
+You can run the adapter using Docker.
+A `docker-compose.yml` file is provided for convenience.
+
+```bash
+docker compose up -d
+
+# Create the database and load fixtures
+docker compose exec userli bin/console doctrine:schema:create
+docker compose exec userli bin/console doctrine:fixtures:load --no-debug
+
+docker compose exec postfix postmap -q "example.org" tcp:adapter:10002
+```
+
 ## Metrics
 
 The adapter exposes metrics in the Prometheus format. You can access them on the `/metrics` endpoint.
