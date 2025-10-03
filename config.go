@@ -14,17 +14,8 @@ type Config struct {
 	// UserliBaseURL is the base URL for the userli service.
 	UserliBaseURL string
 
-	// AliasListenAddr is the address to listen for alias requests.
-	AliasListenAddr string
-
-	// DomainListenAddr is the address to listen for domain requests.
-	DomainListenAddr string
-
-	// MailboxListenAddr is the address to listen for mailbox requests.
-	MailboxListenAddr string
-
-	// SendersListenAddr is the address to listen for senders requests.
-	SendersListenAddr string
+	// SocketmapListenAddr is the address to listen for socketmap requests.
+	SocketmapListenAddr string
 
 	// MetricsListenAddr is the address to listen for metrics requests.
 	MetricsListenAddr string
@@ -64,38 +55,20 @@ func NewConfig() *Config {
 		log.Fatal("USERLI_TOKEN is required")
 	}
 
-	aliasListenAddr := os.Getenv("ALIAS_LISTEN_ADDR")
-	if aliasListenAddr == "" {
-		aliasListenAddr = ":10001"
-	}
-
-	domainListenAddr := os.Getenv("DOMAIN_LISTEN_ADDR")
-	if domainListenAddr == "" {
-		domainListenAddr = ":10002"
-	}
-
-	mailboxListenAddr := os.Getenv("MAILBOX_LISTEN_ADDR")
-	if mailboxListenAddr == "" {
-		mailboxListenAddr = ":10003"
-	}
-
-	sendersListenAddr := os.Getenv("SENDERS_LISTEN_ADDR")
-	if sendersListenAddr == "" {
-		sendersListenAddr = ":10004"
+	socketmapListenAddr := os.Getenv("SOCKETMAP_LISTEN_ADDR")
+	if socketmapListenAddr == "" {
+		socketmapListenAddr = ":10001"
 	}
 
 	metricsListenAddr := os.Getenv("METRICS_LISTEN_ADDR")
 	if metricsListenAddr == "" {
-		metricsListenAddr = ":10005"
+		metricsListenAddr = ":10002"
 	}
 
 	return &Config{
-		UserliBaseURL:     userliBaseURL,
-		UserliToken:       userliToken,
-		AliasListenAddr:   aliasListenAddr,
-		DomainListenAddr:  domainListenAddr,
-		MailboxListenAddr: mailboxListenAddr,
-		SendersListenAddr: sendersListenAddr,
-		MetricsListenAddr: metricsListenAddr,
+		UserliBaseURL:       userliBaseURL,
+		UserliToken:         userliToken,
+		SocketmapListenAddr: socketmapListenAddr,
+		MetricsListenAddr:   metricsListenAddr,
 	}
 }

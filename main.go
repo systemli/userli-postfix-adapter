@@ -12,7 +12,7 @@ import (
 func main() {
 	config := NewConfig()
 	userli := NewUserli(config.UserliToken, config.UserliBaseURL)
-	adapter := NewPostfixAdapter(userli)
+	socketmapAdapter := NewSocketmapAdapter(userli)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -21,12 +21,9 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	wg.Add(4)
-	go StartTCPServer(ctx, &wg, config.AliasListenAddr, adapter.AliasHandler)
-	go StartTCPServer(ctx, &wg, config.DomainListenAddr, adapter.DomainHandler)
-	go StartTCPServer(ctx, &wg, config.MailboxListenAddr, adapter.MailboxHandler)
-	go StartTCPServer(ctx, &wg, config.SendersListenAddr, adapter.SendersHandler)
+	wg.Add(1)
+	go StartSocketmapServer(ctx, &wg, config.SocketmapListenAddr, socketmapAdapter)
 
 	wg.Wait()
-	log.Info("All servers stopped")
+	log.Info("Socketmap server stopped")
 }
