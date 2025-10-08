@@ -1,225 +1,200 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/markdingo/netstring"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	StatusOK       Status = 200
-	StatusError    Status = 400
-	StatusNoResult Status = 500
-
-	ResponseNoResult     string = "NO RESULT"
-	ResponsePayloadError string = "PAYLOAD ERROR"
-
-	ErrPayloadError string = "Error getting payload"
-	ErrAPIError     string = "Error fetching data"
-)
-
-// Status is the status code for the response.
-type Status int
-
-// Response is the response to a postfix command.
-type Response struct {
-	Status   Status
-	Response string
+// SocketmapResponse represents a socketmap protocol response
+type SocketmapResponse struct {
+	Status string
+	Data   string
 }
 
-// String returns the response as a string.
-func (r *Response) String() string {
-	return fmt.Sprintf("%d %s\n", r.Status, strings.ReplaceAll(r.Response, " ", "%20"))
+// String returns the response as a socketmap protocol string
+func (r *SocketmapResponse) String() string {
+	if r.Data == "" {
+		return r.Status
+	}
+	return fmt.Sprintf("%s %s", r.Status, r.Data)
 }
 
-// PostfixAdapter is an adapter for postfix postmap commands.
-// See https://www.postfix.org/postmap.1.html
-type PostfixAdapter struct {
+// SocketmapAdapter handles socketmap protocol requests
+type SocketmapAdapter struct {
 	client UserliService
 }
 
-// NewPostfixAdapter creates a new Handler with the given UserliService.
-func NewPostfixAdapter(client UserliService) *PostfixAdapter {
-	return &PostfixAdapter{client: client}
+// NewSocketmapAdapter creates a new SocketmapAdapter with the given UserliService
+func NewSocketmapAdapter(client UserliService) *SocketmapAdapter {
+	return &SocketmapAdapter{client: client}
 }
 
-// AliasHandler handles the get command for aliases.
-// It fetches the destinations for the given alias.
-// The response is a comma separated list of destinations.
-func (p *PostfixAdapter) AliasHandler(conn net.Conn) {
+// HandleConnection processes a single socketmap connection
+// Supports persistent connections with multiple requests
+func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			log.WithError(err).Error("Error closing connection")
 		}
 	}()
-	now := time.Now()
 
-	payload, err := p.payload(conn)
-	if err != nil {
-		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "alias")
-		return
+	decoder := netstring.NewDecoder(conn)
+	encoder := netstring.NewEncoder(conn)
+
+	for {
+		// Set read deadline for each request
+		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
+		// Read the request netstring
+		requestBytes, err := decoder.Decode()
+		if err != nil {
+			// Check if this is a normal connection closure (EOF) or an actual error
+			if err == io.EOF {
+				log.Debug("Client closed connection")
+			} else {
+				log.WithError(err).Debug("Failed to decode request")
+			}
+			return
+		}
+		request := string(requestBytes)
+
+		now := time.Now()
+
+		// Parse the request: "name key"
+		parts := strings.SplitN(strings.TrimSpace(request), " ", 2)
+		if len(parts) != 2 {
+			log.WithField("request", request).Error("Invalid request format")
+			response := &SocketmapResponse{Status: "PERM", Data: "Invalid request format"}
+			s.writeResponse(encoder, conn, response, now, "invalid")
+			continue
+		}
+
+		mapName := parts[0]
+		key := parts[1]
+
+		log.WithFields(log.Fields{
+			"map": mapName,
+			"key": key,
+		}).Debug("Processing socketmap request")
+
+		// Route to appropriate handler based on map name
+		var response *SocketmapResponse
+		switch mapName {
+		case "alias":
+			response = s.handleAlias(key)
+		case "domain":
+			response = s.handleDomain(key)
+		case "mailbox":
+			response = s.handleMailbox(key)
+		case "senders":
+			response = s.handleSenders(key)
+		default:
+			log.WithField("map", mapName).Error("Unknown map name")
+			response = &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
+		}
+
+		s.writeResponse(encoder, conn, response, now, mapName)
 	}
-	aliases, err := p.client.GetAliases(payload)
+}
+
+// handleAlias processes alias lookup requests
+func (s *SocketmapAdapter) handleAlias(key string) *SocketmapResponse {
+	aliases, err := s.client.GetAliases(key)
 	if err != nil {
-		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, Response{Status: StatusError, Response: "Error fetching aliases"}, now, "alias")
-		return
+		log.WithError(err).WithField("key", key).Error("Error fetching aliases")
+		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"}
 	}
 
 	if len(aliases) == 0 {
-		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "alias")
-		return
+		return &SocketmapResponse{Status: "NOTFOUND"}
 	}
 
-	p.write(conn, Response{Status: StatusOK, Response: strings.Join(aliases, ",")}, now, "alias")
+	return &SocketmapResponse{Status: "OK", Data: strings.Join(aliases, ",")}
 }
 
-// DomainHandler handles the get command for domains.
-// It checks if the domain exists.
-// The response is a single line with the status code.
-func (p *PostfixAdapter) DomainHandler(conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			log.WithError(err).Error("Error closing connection")
-		}
-	}()
-	now := time.Now()
-
-	payload, err := p.payload(conn)
+// handleDomain processes domain lookup requests
+func (s *SocketmapAdapter) handleDomain(key string) *SocketmapResponse {
+	exists, err := s.client.GetDomain(key)
 	if err != nil {
-		log.WithError(err).Error("Error getting payload")
-		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "domain")
-		return
-	}
-
-	exists, err := p.client.GetDomain(payload)
-	if err != nil {
-		log.WithError(err).WithField("domain", payload).Error(ErrAPIError)
-		p.write(conn, Response{Status: StatusError, Response: "Error fetching domain"}, now, "domain")
-		return
+		log.WithError(err).WithField("key", key).Error("Error fetching domain")
+		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"}
 	}
 
 	if !exists {
-		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "domain")
-		return
+		return &SocketmapResponse{Status: "NOTFOUND"}
 	}
 
-	p.write(conn, Response{Status: StatusOK, Response: "1"}, now, "domain")
+	return &SocketmapResponse{Status: "OK", Data: "1"}
 }
 
-// MailboxHandler handles the get command for mailboxes.
-// It checks if the mailbox exists.
-// The response is a single line with the status code.
-func (p *PostfixAdapter) MailboxHandler(conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			log.WithError(err).Error("Error closing connection")
-		}
-	}()
-	now := time.Now()
-
-	payload, err := p.payload(conn)
+// handleMailbox processes mailbox lookup requests
+func (s *SocketmapAdapter) handleMailbox(key string) *SocketmapResponse {
+	exists, err := s.client.GetMailbox(key)
 	if err != nil {
-		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "mailbox")
-		return
-	}
-
-	exists, err := p.client.GetMailbox(payload)
-	if err != nil {
-		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, Response{Status: StatusError, Response: "Error fetching mailbox"}, now, "mailbox")
-		return
+		log.WithError(err).WithField("key", key).Error("Error fetching mailbox")
+		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"}
 	}
 
 	if !exists {
-		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "mailbox")
-		return
+		return &SocketmapResponse{Status: "NOTFOUND"}
 	}
 
-	p.write(conn, Response{Status: StatusOK, Response: "1"}, now, "mailbox")
+	return &SocketmapResponse{Status: "OK", Data: "1"}
 }
 
-// SendersHandler handles the get command for senders.
-// It fetches the senders for the given email.
-// The response is a comma separated list of senders.
-func (p *PostfixAdapter) SendersHandler(conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			log.WithError(err).Error("Error closing connection")
-		}
-	}()
-	now := time.Now()
-
-	payload, err := p.payload(conn)
+// handleSenders processes senders lookup requests
+func (s *SocketmapAdapter) handleSenders(key string) *SocketmapResponse {
+	senders, err := s.client.GetSenders(key)
 	if err != nil {
-		log.WithError(err).Error(ErrPayloadError)
-		p.write(conn, Response{Status: StatusError, Response: ResponsePayloadError}, now, "senders")
-		return
-	}
-
-	senders, err := p.client.GetSenders(payload)
-	if err != nil {
-		log.WithError(err).WithField("email", payload).Error(ErrAPIError)
-		p.write(conn, Response{Status: StatusError, Response: "Error fetching senders"}, now, "senders")
-		return
+		log.WithError(err).WithField("key", key).Error("Error fetching senders")
+		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"}
 	}
 
 	if len(senders) == 0 {
-		p.write(conn, Response{Status: StatusNoResult, Response: ResponseNoResult}, now, "senders")
-		return
+		return &SocketmapResponse{Status: "NOTFOUND"}
 	}
 
-	p.write(conn, Response{Status: StatusOK, Response: strings.Join(senders, ",")}, now, "senders")
+	return &SocketmapResponse{Status: "OK", Data: strings.Join(senders, ",")}
 }
 
-// payload reads the data from the connection. It checks for valid
-// commands sent by postfix and returns the payload.
-func (h *PostfixAdapter) payload(conn net.Conn) (string, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-
-	data := make([]byte, 4096)
-	_, err := conn.Read(data)
-	if err != nil {
-		return "", err
-	}
-
-	data = bytes.Trim(data, "\x00")
-	parts := strings.Split(string(data), " ")
-	if len(parts) < 2 || parts[0] != "get" {
-		return "", errors.New("invalid or unsupported command")
-	}
-
-	payload := strings.TrimSuffix(parts[1], "\n")
-
-	log.WithFields(log.Fields{"command": parts[0], "payload": payload}).Debug("Received payload")
-
-	return payload, nil
-}
-
-func (h *PostfixAdapter) write(conn net.Conn, response Response, now time.Time, handler string) {
+// writeResponse sends a socketmap response back to the client
+func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
 	var status string
 	switch response.Status {
-	case StatusOK:
+	case "OK":
 		status = "success"
+	case "NOTFOUND":
+		status = "notfound"
 	default:
 		status = "error"
 	}
 
-	log.WithFields(log.Fields{"response": response.String(), "handler": handler, "status": status}).Debug("Writing response")
+	log.WithFields(log.Fields{
+		"response": response.String(),
+		"map":      mapName,
+		"status":   status,
+	}).Debug("Writing socketmap response")
 
+	// Set write deadline
 	_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 
-	_, err := conn.Write([]byte(response.String()))
+	// Encode and send the response
+	err := encoder.EncodeString(netstring.NoKey, response.String())
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{"response": response.String(), "handler": handler, "status": status}).Error("Error writing response")
+		log.WithError(err).WithFields(log.Fields{
+			"response": response.String(),
+			"map":      mapName,
+			"status":   status,
+		}).Error("Error writing response")
 	}
-	requestDurations.With(prometheus.Labels{"handler": handler, "status": status}).Observe(time.Since(now).Seconds())
+
+	// Record metrics
+	requestDurations.With(prometheus.Labels{"handler": mapName, "status": status}).Observe(time.Since(startTime).Seconds())
 }

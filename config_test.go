@@ -36,31 +36,22 @@ func (s *ConfigTestSuite) TestNewConfig() {
 
 		s.Equal("token", config.UserliToken)
 		s.Equal("http://localhost:8000", config.UserliBaseURL)
-		s.Equal(":10001", config.AliasListenAddr)
-		s.Equal(":10002", config.DomainListenAddr)
-		s.Equal(":10003", config.MailboxListenAddr)
-		s.Equal(":10004", config.SendersListenAddr)
-		s.Equal(":10005", config.MetricsListenAddr)
+		s.Equal(":10001", config.SocketmapListenAddr)
+		s.Equal(":10002", config.MetricsListenAddr)
 	})
 
 	s.Run("custom config", func() {
 		os.Setenv("USERLI_TOKEN", "token")
 		os.Setenv("USERLI_BASE_URL", "http://example.com")
-		os.Setenv("ALIAS_LISTEN_ADDR", ":20001")
-		os.Setenv("DOMAIN_LISTEN_ADDR", ":20002")
-		os.Setenv("MAILBOX_LISTEN_ADDR", ":20003")
-		os.Setenv("SENDERS_LISTEN_ADDR", ":20004")
-		os.Setenv("METRICS_LISTEN_ADDR", ":20005")
+		os.Setenv("SOCKETMAP_LISTEN_ADDR", ":20001")
+		os.Setenv("METRICS_LISTEN_ADDR", ":20002")
 
 		config := NewConfig()
 
 		s.Equal("token", config.UserliToken)
 		s.Equal("http://example.com", config.UserliBaseURL)
-		s.Equal(":20001", config.AliasListenAddr)
-		s.Equal(":20002", config.DomainListenAddr)
-		s.Equal(":20003", config.MailboxListenAddr)
-		s.Equal(":20004", config.SendersListenAddr)
-		s.Equal(":20005", config.MetricsListenAddr)
+		s.Equal(":20001", config.SocketmapListenAddr)
+		s.Equal(":20002", config.MetricsListenAddr)
 	})
 }
 
