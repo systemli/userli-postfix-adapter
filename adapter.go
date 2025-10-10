@@ -196,5 +196,7 @@ func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Co
 	}
 
 	// Record metrics
-	requestDurations.With(prometheus.Labels{"handler": mapName, "status": status}).Observe(time.Since(startTime).Seconds())
+	duration := time.Since(startTime).Seconds()
+	requestDurations.With(prometheus.Labels{"handler": mapName, "status": status}).Observe(duration)
+	requestsTotal.With(prometheus.Labels{"handler": mapName, "status": status}).Inc()
 }
