@@ -167,17 +167,13 @@ func (s *SocketmapAdapter) handleSenders(key string) *SocketmapResponse {
 // writeResponse sends a socketmap response back to the client
 func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
 	var status string
-	var result string
 	switch response.Status {
 	case "OK":
 		status = "success"
-		result = "ok"
 	case "NOTFOUND":
 		status = "notfound"
-		result = "notfound"
 	default:
 		status = "error"
-		result = "error"
 	}
 
 	log.WithFields(log.Fields{
@@ -202,5 +198,5 @@ func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Co
 	// Record metrics
 	duration := time.Since(startTime).Seconds()
 	requestDurations.With(prometheus.Labels{"handler": mapName, "status": status}).Observe(duration)
-	requestsTotal.With(prometheus.Labels{"handler": mapName, "status": status, "result": result}).Inc()
+	requestsTotal.With(prometheus.Labels{"handler": mapName, "status": status}).Inc()
 }

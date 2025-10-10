@@ -25,7 +25,7 @@ var (
 	requestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "userli_postfix_adapter_requests_total",
 		Help: "Total number of socketmap requests",
-	}, []string{"handler", "status", "result"})
+	}, []string{"handler", "status"})
 
 	// Active connections gauge
 	activeConnections = prometheus.NewGauge(prometheus.GaugeOpts{
