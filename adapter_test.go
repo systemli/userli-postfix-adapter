@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/mock"
 )
 
 // Mock connection for testing
@@ -90,7 +93,7 @@ func TestSocketmapAdapter_handleAlias(t *testing.T) {
 			name: "existing alias",
 			key:  "alias@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetAliases", "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
+				m.On("GetAliases", mock.Anything, "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
 			},
 			expected: SocketmapResponse{Status: "OK", Data: "user1@example.com,user2@example.com"},
 		},
@@ -98,7 +101,7 @@ func TestSocketmapAdapter_handleAlias(t *testing.T) {
 			name: "non-existing alias",
 			key:  "nonexistent@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetAliases", "nonexistent@example.com").Return([]string{}, nil)
+				m.On("GetAliases", mock.Anything, "nonexistent@example.com").Return([]string{}, nil)
 			},
 			expected: SocketmapResponse{Status: "NOTFOUND"},
 		},
@@ -106,7 +109,7 @@ func TestSocketmapAdapter_handleAlias(t *testing.T) {
 			name: "service error",
 			key:  "error@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetAliases", "error@example.com").Return([]string{}, errors.New("service error"))
+				m.On("GetAliases", mock.Anything, "error@example.com").Return([]string{}, errors.New("service error"))
 			},
 			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"},
 		},
@@ -118,7 +121,8 @@ func TestSocketmapAdapter_handleAlias(t *testing.T) {
 			tt.setup(mock)
 			adapter := NewSocketmapAdapter(mock)
 
-			result := adapter.handleAlias(tt.key)
+			ctx := context.Background()
+			result := adapter.handleAlias(ctx, tt.key)
 
 			if result.Status != tt.expected.Status {
 				t.Errorf("handleAlias() status = %q, want %q", result.Status, tt.expected.Status)
@@ -142,7 +146,7 @@ func TestSocketmapAdapter_handleDomain(t *testing.T) {
 			name: "existing domain",
 			key:  "example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetDomain", "example.com").Return(true, nil)
+				m.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
 			},
 			expected: SocketmapResponse{Status: "OK", Data: "1"},
 		},
@@ -150,7 +154,7 @@ func TestSocketmapAdapter_handleDomain(t *testing.T) {
 			name: "non-existing domain",
 			key:  "nonexistent.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetDomain", "nonexistent.com").Return(false, nil)
+				m.On("GetDomain", mock.Anything, "nonexistent.com").Return(false, nil)
 			},
 			expected: SocketmapResponse{Status: "NOTFOUND"},
 		},
@@ -158,7 +162,7 @@ func TestSocketmapAdapter_handleDomain(t *testing.T) {
 			name: "service error",
 			key:  "error.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetDomain", "error.com").Return(false, errors.New("service error"))
+				m.On("GetDomain", mock.Anything, "error.com").Return(false, errors.New("service error"))
 			},
 			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"},
 		},
@@ -170,7 +174,8 @@ func TestSocketmapAdapter_handleDomain(t *testing.T) {
 			tt.setup(mock)
 			adapter := NewSocketmapAdapter(mock)
 
-			result := adapter.handleDomain(tt.key)
+			ctx := context.Background()
+			result := adapter.handleDomain(ctx, tt.key)
 
 			if result.Status != tt.expected.Status {
 				t.Errorf("handleDomain() status = %q, want %q", result.Status, tt.expected.Status)
@@ -194,7 +199,7 @@ func TestSocketmapAdapter_handleMailbox(t *testing.T) {
 			name: "existing mailbox",
 			key:  "user@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetMailbox", "user@example.com").Return(true, nil)
+				m.On("GetMailbox", mock.Anything, "user@example.com").Return(true, nil)
 			},
 			expected: SocketmapResponse{Status: "OK", Data: "1"},
 		},
@@ -202,7 +207,7 @@ func TestSocketmapAdapter_handleMailbox(t *testing.T) {
 			name: "non-existing mailbox",
 			key:  "nonexistent@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetMailbox", "nonexistent@example.com").Return(false, nil)
+				m.On("GetMailbox", mock.Anything, "nonexistent@example.com").Return(false, nil)
 			},
 			expected: SocketmapResponse{Status: "NOTFOUND"},
 		},
@@ -210,7 +215,7 @@ func TestSocketmapAdapter_handleMailbox(t *testing.T) {
 			name: "service error",
 			key:  "error@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetMailbox", "error@example.com").Return(false, errors.New("service error"))
+				m.On("GetMailbox", mock.Anything, "error@example.com").Return(false, errors.New("service error"))
 			},
 			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"},
 		},
@@ -222,7 +227,8 @@ func TestSocketmapAdapter_handleMailbox(t *testing.T) {
 			tt.setup(mock)
 			adapter := NewSocketmapAdapter(mock)
 
-			result := adapter.handleMailbox(tt.key)
+			ctx := context.Background()
+			result := adapter.handleMailbox(ctx, tt.key)
 
 			if result.Status != tt.expected.Status {
 				t.Errorf("handleMailbox() status = %q, want %q", result.Status, tt.expected.Status)
@@ -246,7 +252,7 @@ func TestSocketmapAdapter_handleSenders(t *testing.T) {
 			name: "existing senders",
 			key:  "user@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetSenders", "user@example.com").Return([]string{"sender1@example.com", "sender2@example.com"}, nil)
+				m.On("GetSenders", mock.Anything, "user@example.com").Return([]string{"sender1@example.com", "sender2@example.com"}, nil)
 			},
 			expected: SocketmapResponse{Status: "OK", Data: "sender1@example.com,sender2@example.com"},
 		},
@@ -254,7 +260,7 @@ func TestSocketmapAdapter_handleSenders(t *testing.T) {
 			name: "no senders",
 			key:  "nosenders@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetSenders", "nosenders@example.com").Return([]string{}, nil)
+				m.On("GetSenders", mock.Anything, "nosenders@example.com").Return([]string{}, nil)
 			},
 			expected: SocketmapResponse{Status: "NOTFOUND"},
 		},
@@ -262,7 +268,7 @@ func TestSocketmapAdapter_handleSenders(t *testing.T) {
 			name: "service error",
 			key:  "error@example.com",
 			setup: func(m *MockUserliService) {
-				m.On("GetSenders", "error@example.com").Return([]string{}, errors.New("service error"))
+				m.On("GetSenders", mock.Anything, "error@example.com").Return([]string{}, errors.New("service error"))
 			},
 			expected: SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"},
 		},
@@ -274,7 +280,8 @@ func TestSocketmapAdapter_handleSenders(t *testing.T) {
 			tt.setup(mock)
 			adapter := NewSocketmapAdapter(mock)
 
-			result := adapter.handleSenders(tt.key)
+			ctx := context.Background()
+			result := adapter.handleSenders(ctx, tt.key)
 
 			if result.Status != tt.expected.Status {
 				t.Errorf("handleSenders() status = %q, want %q", result.Status, tt.expected.Status)
@@ -299,7 +306,7 @@ func TestSocketmapAdapter_HandleConnection(t *testing.T) {
 			name:     "single alias request",
 			requests: []string{"22:alias test@example.com,"},
 			setup: func(m *MockUserliService) {
-				m.On("GetAliases", "test@example.com").Return([]string{"dest@example.com"}, nil)
+				m.On("GetAliases", mock.Anything, "test@example.com").Return([]string{"dest@example.com"}, nil)
 			},
 			expectedCount:  1,
 			expectedOutput: []string{"19:OK dest@example.com,"},
@@ -308,7 +315,7 @@ func TestSocketmapAdapter_HandleConnection(t *testing.T) {
 			name:     "single domain request",
 			requests: []string{"18:domain example.com,"},
 			setup: func(m *MockUserliService) {
-				m.On("GetDomain", "example.com").Return(true, nil)
+				m.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
 			},
 			expectedCount:  1,
 			expectedOutput: []string{"4:OK 1,"},
@@ -334,8 +341,8 @@ func TestSocketmapAdapter_HandleConnection(t *testing.T) {
 				"18:domain example.com,",
 			},
 			setup: func(m *MockUserliService) {
-				m.On("GetAliases", "test@example.com").Return([]string{"dest@example.com"}, nil)
-				m.On("GetDomain", "example.com").Return(true, nil)
+				m.On("GetAliases", mock.Anything, "test@example.com").Return([]string{"dest@example.com"}, nil)
+				m.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
 			},
 			expectedCount: 2,
 			expectedOutput: []string{

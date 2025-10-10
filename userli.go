@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,10 @@ import (
 )
 
 type UserliService interface {
-	GetAliases(email string) ([]string, error)
-	GetDomain(domain string) (bool, error)
-	GetMailbox(email string) (bool, error)
-	GetSenders(email string) ([]string, error)
+	GetAliases(ctx context.Context, email string) ([]string, error)
+	GetDomain(ctx context.Context, domain string) (bool, error)
+	GetMailbox(ctx context.Context, email string) (bool, error)
+	GetSenders(ctx context.Context, email string) ([]string, error)
 }
 
 type Userli struct {
@@ -111,12 +112,12 @@ func NewUserli(token, baseURL string, opts ...Option) *Userli {
 	return u
 }
 
-func (u *Userli) GetAliases(email string) ([]string, error) {
+func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error) {
 	if !strings.Contains(email, "@") {
 		return []string{}, nil
 	}
 
-	resp, err := u.call(fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email))
 	if err != nil {
 		return []string{}, err
 	}
@@ -131,8 +132,8 @@ func (u *Userli) GetAliases(email string) ([]string, error) {
 	return aliases, nil
 }
 
-func (u *Userli) GetDomain(domain string) (bool, error) {
-	resp, err := u.call(fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
+func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
 	if err != nil {
 		return false, err
 	}
@@ -147,12 +148,12 @@ func (u *Userli) GetDomain(domain string) (bool, error) {
 	return result, nil
 }
 
-func (u *Userli) GetMailbox(email string) (bool, error) {
+func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 	if !strings.Contains(email, "@") {
 		return false, nil
 	}
 
-	resp, err := u.call(fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, email))
 	if err != nil {
 		return false, err
 	}
@@ -167,12 +168,12 @@ func (u *Userli) GetMailbox(email string) (bool, error) {
 	return result, nil
 }
 
-func (u *Userli) GetSenders(email string) ([]string, error) {
+func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error) {
 	if !strings.Contains(email, "@") {
 		return []string{}, nil
 	}
 
-	resp, err := u.call(fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, email))
 	if err != nil {
 		return []string{}, err
 	}
@@ -187,10 +188,19 @@ func (u *Userli) GetSenders(email string) ([]string, error) {
 	return senders, nil
 }
 
-func (u *Userli) call(url string) (*http.Response, error) {
+func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {
 	startTime := time.Now()
 
-	req, err := http.NewRequest("GET", url, nil)
+	// Create request with context that has a timeout
+	// If the parent context already has a deadline, use it
+	// Otherwise, set a default timeout of 5 seconds for API calls
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

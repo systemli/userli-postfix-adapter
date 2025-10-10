@@ -125,7 +125,7 @@ func readyHandler(userliClient UserliService) http.HandlerFunc {
 		// Use a channel to make the blocking call cancellable
 		resultChan := make(chan error, 1)
 		go func() {
-			_, err := userliClient.GetDomain("health-check.invalid")
+			_, err := userliClient.GetDomain(ctx, "health-check.invalid")
 			resultChan <- err
 		}()
 

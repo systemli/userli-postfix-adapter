@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -36,14 +37,14 @@ func (s *UserliTestSuite) TestGetAliases() {
 			Reply(200).
 			JSON([]string{"source1@example.com", "source2@example.com"})
 
-		aliases, err := s.userli.GetAliases("alias@example.com")
+		aliases, err := s.userli.GetAliases(context.Background(), "alias@example.com")
 		s.NoError(err)
 		s.True(gock.IsDone())
 		s.Equal([]string{"source1@example.com", "source2@example.com"}, aliases)
 	})
 
 	s.Run("no email", func() {
-		aliases, err := s.userli.GetAliases("alias")
+		aliases, err := s.userli.GetAliases(context.Background(), "alias")
 		s.NoError(err)
 		s.Empty(aliases)
 	})
@@ -58,7 +59,7 @@ func (s *UserliTestSuite) TestGetAliases() {
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
-		aliases, err := s.userli.GetAliases("alias@example.com")
+		aliases, err := s.userli.GetAliases(context.Background(), "alias@example.com")
 		s.Error(err)
 		s.True(gock.IsDone())
 		s.Empty(aliases)
@@ -76,7 +77,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 			Reply(200).
 			JSON("true")
 
-		active, err := s.userli.GetDomain("example.com")
+		active, err := s.userli.GetDomain(context.Background(), "example.com")
 		s.NoError(err)
 		s.True(active)
 	})
@@ -91,7 +92,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 			Reply(200).
 			JSON("false")
 
-		active, err := s.userli.GetDomain("example.com")
+		active, err := s.userli.GetDomain(context.Background(), "example.com")
 		s.NoError(err)
 		s.True(gock.IsDone())
 		s.False(active)
@@ -107,7 +108,7 @@ func (s *UserliTestSuite) TestGetDomain() {
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
-		active, err := s.userli.GetDomain("example.com")
+		active, err := s.userli.GetDomain(context.Background(), "example.com")
 		s.Error(err)
 		s.True(gock.IsDone())
 		s.False(active)
@@ -125,14 +126,14 @@ func (s *UserliTestSuite) TestGetMailbox() {
 			Reply(200).
 			JSON("true")
 
-		active, err := s.userli.GetMailbox("user@example.org")
+		active, err := s.userli.GetMailbox(context.Background(), "user@example.org")
 		s.NoError(err)
 		s.True(active)
 		s.True(gock.IsDone())
 	})
 
 	s.Run("no email", func() {
-		active, err := s.userli.GetMailbox("user")
+		active, err := s.userli.GetMailbox(context.Background(), "user")
 		s.NoError(err)
 		s.False(active)
 	})
@@ -147,7 +148,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 			Reply(200).
 			JSON("false")
 
-		active, err := s.userli.GetMailbox("user@example.org")
+		active, err := s.userli.GetMailbox(context.Background(), "user@example.org")
 		s.NoError(err)
 		s.False(active)
 		s.True(gock.IsDone())
@@ -163,7 +164,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
-		active, err := s.userli.GetMailbox("user@example.org")
+		active, err := s.userli.GetMailbox(context.Background(), "user@example.org")
 		s.Error(err)
 		s.False(active)
 		s.True(gock.IsDone())
@@ -181,14 +182,14 @@ func (s *UserliTestSuite) TestGetSenders() {
 			Reply(200).
 			JSON([]string{"user@example.com"})
 
-		senders, err := s.userli.GetSenders("user@example.com")
+		senders, err := s.userli.GetSenders(context.Background(), "user@example.com")
 		s.NoError(err)
 		s.Equal([]string{"user@example.com"}, senders)
 		s.True(gock.IsDone())
 	})
 
 	s.Run("no email", func() {
-		senders, err := s.userli.GetSenders("user")
+		senders, err := s.userli.GetSenders(context.Background(), "user")
 		s.NoError(err)
 		s.Empty(senders)
 	})
@@ -203,7 +204,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 			Reply(200).
 			JSON([]string{"user1@example.com", "user2@example.com"})
 
-		senders, err := s.userli.GetSenders("alias@example.com")
+		senders, err := s.userli.GetSenders(context.Background(), "alias@example.com")
 		s.NoError(err)
 		s.Equal([]string{"user1@example.com", "user2@example.com"}, senders)
 		s.True(gock.IsDone())
@@ -219,7 +220,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
-		senders, err := s.userli.GetSenders("user@example.com")
+		senders, err := s.userli.GetSenders(context.Background(), "user@example.com")
 		s.Error(err)
 		s.Empty(senders)
 		s.True(gock.IsDone())
