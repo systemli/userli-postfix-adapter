@@ -120,6 +120,7 @@ func (u *Userli) GetAliases(email string) ([]string, error) {
 	if err != nil {
 		return []string{}, err
 	}
+	defer resp.Body.Close()
 
 	var aliases []string
 	err = json.NewDecoder(resp.Body).Decode(&aliases)
@@ -135,6 +136,7 @@ func (u *Userli) GetDomain(domain string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer resp.Body.Close()
 
 	var result bool
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -154,6 +156,7 @@ func (u *Userli) GetMailbox(email string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer resp.Body.Close()
 
 	var result bool
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -173,6 +176,7 @@ func (u *Userli) GetSenders(email string) ([]string, error) {
 	if err != nil {
 		return []string{}, err
 	}
+	defer resp.Body.Close()
 
 	var senders []string
 	err = json.NewDecoder(resp.Body).Decode(&senders)
