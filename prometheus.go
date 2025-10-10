@@ -18,7 +18,7 @@ var (
 	requestDurations = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "userli_postfix_adapter_request_duration_seconds",
 		Help:    "Duration of socketmap requests",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 10), // 1ms to ~1s
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 10), // 1ms to ~1.024s
 	}, []string{"handler", "status"})
 
 	// Request counter
@@ -43,7 +43,7 @@ var (
 	httpClientDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "userli_postfix_adapter_http_client_duration_seconds",
 		Help:    "Duration of HTTP requests to Userli API",
-		Buckets: prometheus.ExponentialBuckets(0.01, 2, 10), // 10ms to ~10s
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 10), // 10ms to 5.12s (0.01, 0.02, 0.04, ..., 5.12)
 	}, []string{"endpoint", "status_code"})
 
 	// HTTP client request counter
