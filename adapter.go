@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -84,29 +85,33 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 			"key": key,
 		}).Debug("Processing socketmap request")
 
+		// Create context with timeout for this request
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
 		// Route to appropriate handler based on map name
 		var response *SocketmapResponse
 		switch mapName {
 		case "alias":
-			response = s.handleAlias(key)
+			response = s.handleAlias(ctx, key)
 		case "domain":
-			response = s.handleDomain(key)
+			response = s.handleDomain(ctx, key)
 		case "mailbox":
-			response = s.handleMailbox(key)
+			response = s.handleMailbox(ctx, key)
 		case "senders":
-			response = s.handleSenders(key)
+			response = s.handleSenders(ctx, key)
 		default:
 			log.WithField("map", mapName).Error("Unknown map name")
 			response = &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 		}
 
+		cancel() // Always cancel context when done
 		s.writeResponse(encoder, conn, response, now, mapName)
 	}
 }
 
 // handleAlias processes alias lookup requests
-func (s *SocketmapAdapter) handleAlias(key string) *SocketmapResponse {
-	aliases, err := s.client.GetAliases(key)
+func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *SocketmapResponse {
+	aliases, err := s.client.GetAliases(ctx, key)
 	if err != nil {
 		log.WithError(err).WithField("key", key).Error("Error fetching aliases")
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"}
@@ -120,8 +125,8 @@ func (s *SocketmapAdapter) handleAlias(key string) *SocketmapResponse {
 }
 
 // handleDomain processes domain lookup requests
-func (s *SocketmapAdapter) handleDomain(key string) *SocketmapResponse {
-	exists, err := s.client.GetDomain(key)
+func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *SocketmapResponse {
+	exists, err := s.client.GetDomain(ctx, key)
 	if err != nil {
 		log.WithError(err).WithField("key", key).Error("Error fetching domain")
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"}
@@ -135,8 +140,8 @@ func (s *SocketmapAdapter) handleDomain(key string) *SocketmapResponse {
 }
 
 // handleMailbox processes mailbox lookup requests
-func (s *SocketmapAdapter) handleMailbox(key string) *SocketmapResponse {
-	exists, err := s.client.GetMailbox(key)
+func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
+	exists, err := s.client.GetMailbox(ctx, key)
 	if err != nil {
 		log.WithError(err).WithField("key", key).Error("Error fetching mailbox")
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"}
@@ -150,8 +155,8 @@ func (s *SocketmapAdapter) handleMailbox(key string) *SocketmapResponse {
 }
 
 // handleSenders processes senders lookup requests
-func (s *SocketmapAdapter) handleSenders(key string) *SocketmapResponse {
-	senders, err := s.client.GetSenders(key)
+func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *SocketmapResponse {
+	senders, err := s.client.GetSenders(ctx, key)
 	if err != nil {
 		log.WithError(err).WithField("key", key).Error("Error fetching senders")
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"}

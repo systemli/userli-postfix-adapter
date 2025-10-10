@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -31,7 +32,7 @@ func (s *PrometheusTestSuite) TestHealthHandler() {
 func (s *PrometheusTestSuite) TestReadyHandler() {
 	s.Run("ready when userli api is reachable", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, nil)
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 		w := httptest.NewRecorder()
@@ -48,7 +49,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 
 	s.Run("unavailable when userli api returns error", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, errors.New("connection refused"))
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, errors.New("connection refused"))
 
 		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 		w := httptest.NewRecorder()
@@ -65,7 +66,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 
 	s.Run("unavailable on timeout", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, nil).After(100 * time.Millisecond)
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, nil).After(100 * time.Millisecond)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
@@ -86,7 +87,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 func (s *PrometheusTestSuite) TestReadyHandlerHealthCheckStatusMetric() {
 	s.Run("sets health check status to 1 when healthy", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, nil)
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 		w := httptest.NewRecorder()
@@ -100,7 +101,7 @@ func (s *PrometheusTestSuite) TestReadyHandlerHealthCheckStatusMetric() {
 
 	s.Run("sets health check status to 0 when unhealthy", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, errors.New("api error"))
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, errors.New("api error"))
 
 		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 		w := httptest.NewRecorder()
@@ -116,7 +117,7 @@ func (s *PrometheusTestSuite) TestReadyHandlerHealthCheckStatusMetric() {
 func (s *PrometheusTestSuite) TestStartMetricsServer() {
 	s.Run("starts and stops gracefully", func() {
 		mockClient := &MockUserliService{}
-		mockClient.On("GetDomain", "health-check.invalid").Return(false, nil).Maybe()
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, nil).Maybe()
 
 		ctx, cancel := context.WithCancel(context.Background())
 

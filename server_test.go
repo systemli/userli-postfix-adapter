@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/markdingo/netstring"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	log "github.com/sirupsen/logrus"
@@ -109,10 +110,10 @@ func (s *ServerTestSuite) TestStartSocketmapServer_InvalidAddress() {
 
 // TestStartSocketmapServer_ConnectionHandling tests connection acceptance and handling
 func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionHandling() {
-	mock := &MockUserliService{}
+	mockService := &MockUserliService{}
 	// Mock a successful domain lookup
-	mock.On("GetDomain", "example.com").Return(true, nil)
-	adapter := NewSocketmapAdapter(mock)
+	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
+	adapter := NewSocketmapAdapter(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -145,13 +146,13 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionHandling() {
 	s.Require().NoError(err)
 	s.Contains(decodedResponse, "OK 1", "Expected successful domain lookup response")
 
-	mock.AssertExpectations(s.T())
+	mockService.AssertExpectations(s.T())
 }
 
 // TestStartSocketmapServer_GracefulShutdown tests graceful shutdown with active connections
 func (s *ServerTestSuite) TestStartSocketmapServer_GracefulShutdown() {
-	mock := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mock)
+	mockService := &MockUserliService{}
+	adapter := NewSocketmapAdapter(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -201,9 +202,9 @@ func (s *ServerTestSuite) TestStartSocketmapServer_GracefulShutdown() {
 
 // TestHandleSocketmapConnection tests the connection handler function
 func (s *ServerTestSuite) TestHandleSocketmapConnection() {
-	mock := &MockUserliService{}
-	mock.On("GetDomain", "example.com").Return(true, nil)
-	adapter := NewSocketmapAdapter(mock)
+	mockService := &MockUserliService{}
+	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
+	adapter := NewSocketmapAdapter(mockService)
 
 	// Create a pipe to simulate a connection
 	server, client := net.Pipe()
@@ -223,13 +224,13 @@ func (s *ServerTestSuite) TestHandleSocketmapConnection() {
 	s.Require().NoError(err)
 	s.Contains(decodedResponse, "OK 1")
 
-	mock.AssertExpectations(s.T())
+	mockService.AssertExpectations(s.T())
 }
 
 // TestStartSocketmapServer_ConnectionPoolLimit tests connection pool limits
 func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionPoolLimit() {
-	mock := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mock)
+	mockService := &MockUserliService{}
+	adapter := NewSocketmapAdapter(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -273,10 +274,10 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionPoolLimit() {
 
 // TestHandleSocketmapConnection_MultipleRequests tests handling multiple requests on same connection
 func (s *ServerTestSuite) TestHandleSocketmapConnection_MultipleRequests() {
-	mock := &MockUserliService{}
-	mock.On("GetDomain", "example.com").Return(true, nil)
-	mock.On("GetDomain", "example.org").Return(false, nil)
-	adapter := NewSocketmapAdapter(mock)
+	mockService := &MockUserliService{}
+	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
+	mockService.On("GetDomain", mock.Anything, "example.org").Return(false, nil)
+	adapter := NewSocketmapAdapter(mockService)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -305,7 +306,7 @@ func (s *ServerTestSuite) TestHandleSocketmapConnection_MultipleRequests() {
 	s.Require().NoError(err)
 	s.Contains(decodedResponse2, "NOTFOUND")
 
-	mock.AssertExpectations(s.T())
+	mockService.AssertExpectations(s.T())
 }
 
 func TestServer(t *testing.T) {
