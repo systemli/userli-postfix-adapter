@@ -78,7 +78,7 @@ docker run -e USERLI_TOKEN=your_token -e USERLI_BASE_URL=http://your-userli-inst
 
 The adapter implements the Postfix socketmap protocol using netstrings for encoding. Each request and response is formatted as:
 
-```
+```text
 [length]:[data],
 ```
 
@@ -91,16 +91,16 @@ Where:
 
 ### Request Format
 
-```
+```text
 [length]:[mapname key],
 ```
 
 Examples:
 
-- `22:alias test@example.com,` - Look up alias for test@example.com
+- `22:alias test@example.com,` - Look up alias for <test@example.com>
 - `18:domain example.com,` - Check if domain example.com exists
-- `23:mailbox user@example.com,` - Check if mailbox user@example.com exists
-- `24:senders user@example.com,` - Get senders for user@example.com
+- `23:mailbox user@example.com,` - Check if mailbox <user@example.com> exists
+- `24:senders user@example.com,` - Get senders for <user@example.com>
 
 ### Response Format
 
@@ -113,48 +113,49 @@ The adapter returns one of these response types:
 
 Examples:
 
-- `19:OK dest@example.com,` - Alias found, destination is dest@example.com
+- `19:OK dest@example.com,` - Alias found, destination is <dest@example.com>
 - `4:OK 1,` - Domain/mailbox exists
 - `8:NOTFOUND,` - No data found
 - `20:TEMP Service error,` - Temporary service error
 
-## Metrics
+## Observability
 
-The adapter exposes metrics in the Prometheus format. You can access them on the `/metrics` endpoint.
+The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides health check endpoints.
 
-```text
-# HELP userli_postfix_adapter_request_duration_seconds Duration of requests to userli
-# TYPE userli_postfix_adapter_request_duration_seconds histogram
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="0.1"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="0.15000000000000002"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="0.22500000000000003"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="0.3375"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="0.5062500000000001"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="alias",status="success",le="+Inf"} 1
-userli_postfix_adapter_request_duration_seconds_sum{handler="alias",status="success"} 0.074540625
-userli_postfix_adapter_request_duration_seconds_count{handler="alias",status="success"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="0.1"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="0.15000000000000002"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="0.22500000000000003"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="0.3375"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="0.5062500000000001"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="domain",status="success",le="+Inf"} 3
-userli_postfix_adapter_request_duration_seconds_sum{handler="domain",status="success"} 0.246158083
-userli_postfix_adapter_request_duration_seconds_count{handler="domain",status="success"} 3
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="0.1"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="0.15000000000000002"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="0.22500000000000003"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="0.3375"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="0.5062500000000001"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="mailbox",status="success",le="+Inf"} 1
-userli_postfix_adapter_request_duration_seconds_sum{handler="mailbox",status="success"} 0.097836333
-userli_postfix_adapter_request_duration_seconds_count{handler="mailbox",status="success"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="0.1"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="0.15000000000000002"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="0.22500000000000003"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="0.3375"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="0.5062500000000001"} 1
-userli_postfix_adapter_request_duration_seconds_bucket{handler="senders",status="success",le="+Inf"} 1
-userli_postfix_adapter_request_duration_seconds_sum{handler="senders",status="success"} 0.097870375
-userli_postfix_adapter_request_duration_seconds_count{handler="senders",status="success"} 1
+### Metrics
+
+**Socketmap Metrics:**
+
+- `userli_postfix_adapter_request_duration_seconds` - Request duration histogram
+- `userli_postfix_adapter_requests_total` - Total request counter
+- `userli_postfix_adapter_active_connections` - Active connections gauge
+- `userli_postfix_adapter_connection_pool_usage` - Connection pool usage (0-500)
+
+**HTTP Client Metrics:**
+
+- `userli_postfix_adapter_http_client_duration_seconds` - Userli API request duration
+- `userli_postfix_adapter_http_client_requests_total` - Userli API request counter
+
+**Health:**
+
+- `userli_postfix_adapter_health_check_status` - Health check status (1=healthy, 0=unhealthy)
+
+All metrics include relevant labels (handler, status, endpoint, etc.).
+
+### Health Endpoints
+
+- **`/health`** - Liveness probe (always returns 200 OK)
+- **`/ready`** - Readiness probe (checks Userli API connectivity)
+
+Example Kubernetes configuration:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 10002
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 10002
 ```

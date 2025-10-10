@@ -188,6 +188,8 @@ func (u *Userli) GetSenders(email string) ([]string, error) {
 }
 
 func (u *Userli) call(url string) (*http.Response, error) {
+	startTime := time.Now()
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -205,6 +207,27 @@ func (u *Userli) call(url string) (*http.Response, error) {
 	u.mu.RUnlock()
 
 	resp, err := client.Do(req)
+
+	// Extract endpoint name from URL path for metrics
+	endpoint := "unknown"
+	if resp != nil {
+		// Extract last part of path (alias, domain, mailbox, senders)
+		parts := strings.Split(url, "/")
+		if len(parts) >= 5 {
+			endpoint = parts[len(parts)-2]
+		}
+	}
+
+	statusCode := "error"
+	if resp != nil {
+		statusCode = fmt.Sprintf("%d", resp.StatusCode)
+	}
+
+	// Record HTTP client metrics
+	duration := time.Since(startTime).Seconds()
+	httpClientDuration.WithLabelValues(endpoint, statusCode).Observe(duration)
+	httpClientRequestsTotal.WithLabelValues(endpoint, statusCode).Inc()
+
 	if err != nil {
 		return nil, err
 	}

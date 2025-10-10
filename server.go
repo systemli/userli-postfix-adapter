@@ -24,7 +24,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 	connSemaphore := make(chan struct{}, MaxConcurrentConnections)
 
 	// Track active connections for graceful shutdown
-	var activeConnections sync.WaitGroup
+	var activeConnWg sync.WaitGroup
 
 	lc := net.ListenConfig{
 		KeepAlive: KeepAliveTimeout, // Enable TCP Keep-Alive for Postfix connections
@@ -44,7 +44,9 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 		listener.Close()
 
 		// Wait for active connections to finish
-		activeConnections.Wait()
+		activeConnWg.Wait()
+		activeConnections.Set(0)
+		connectionPoolUsage.Set(0)
 		log.WithField("addr", addr).Info("All socketmap connections closed")
 	}()
 
@@ -64,8 +66,10 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 		select {
 		case connSemaphore <- struct{}{}:
 			// Connection slot acquired
-			activeConnections.Add(1)
-			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnections, addr)
+			activeConnWg.Add(1)
+			activeConnections.Inc()
+			connectionPoolUsage.Set(float64(len(connSemaphore)))
+			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnWg, addr)
 		default:
 			// Connection pool full, reject connection
 			log.WithField("addr", addr).Warn("Connection pool full, rejecting socketmap connection")
@@ -78,6 +82,8 @@ func handleSocketmapConnection(conn net.Conn, adapter *SocketmapAdapter, semapho
 	defer func() {
 		_ = conn.Close()
 		<-semaphore // Release connection slot
+		activeConnections.Dec()
+		connectionPoolUsage.Set(float64(len(semaphore)))
 		wg.Done()
 	}()
 
