@@ -45,7 +45,7 @@ func (s *UserliTestSuite) TestGetAliases() {
 
 	s.Run("no email", func() {
 		aliases, err := s.userli.GetAliases(context.Background(), "alias")
-		s.NoError(err)
+		s.Error(err)
 		s.Empty(aliases)
 	})
 
@@ -134,7 +134,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 
 	s.Run("no email", func() {
 		active, err := s.userli.GetMailbox(context.Background(), "user")
-		s.NoError(err)
+		s.Error(err)
 		s.False(active)
 	})
 
@@ -190,7 +190,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 
 	s.Run("no email", func() {
 		senders, err := s.userli.GetSenders(context.Background(), "user")
-		s.NoError(err)
+		s.Error(err)
 		s.Empty(senders)
 	})
 
@@ -283,6 +283,19 @@ func (s *UserliTestSuite) TestWithTimeout() {
 	})
 }
 
+func (s *UserliTestSuite) TestWithDelimiter() {
+	s.Run("sets delimiter", func() {
+		delimiter := "+"
+		userli := NewUserli("token", "http://localhost", WithDelimiter(delimiter))
+
+		userli.mu.RLock()
+		configuredDelimiter := userli.delimiter
+		userli.mu.RUnlock()
+
+		s.Equal(delimiter, configuredDelimiter)
+	})
+}
+
 func (s *UserliTestSuite) TestConcurrentOptions() {
 	s.Run("thread safety", func() {
 		userli := NewUserli("token", "http://localhost")
@@ -316,6 +329,95 @@ func (s *UserliTestSuite) TestConcurrentOptions() {
 		userli.mu.RUnlock()
 
 		s.NotNil(client)
+	})
+}
+
+func (s *UserliTestSuite) TestSanitizeEmail() {
+	s.Run("valid email without delimiter", func() {
+		result, err := s.userli.sanitizeEmail("user@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("invalid email missing @", func() {
+		result, err := s.userli.sanitizeEmail("userexample.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid email format")
+	})
+
+	s.Run("invalid email multiple @", func() {
+		result, err := s.userli.sanitizeEmail("user@domain@example.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid email format")
+	})
+
+	s.Run("empty email", func() {
+		result, err := s.userli.sanitizeEmail("")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid email format")
+	})
+
+	s.Run("removes delimiter when configured", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
+		result, err := userli.sanitizeEmail("user+tag@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("no delimiter when not configured", func() {
+		result, err := s.userli.sanitizeEmail("user+tag@example.com")
+		s.NoError(err)
+		s.Equal("user+tag@example.com", result)
+	})
+
+	s.Run("removes delimiter with multiple occurrences", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
+		result, err := userli.sanitizeEmail("user+tag+extra@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("delimiter at end of local part", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
+		result, err := userli.sanitizeEmail("user+@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("delimiter at start of local part", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
+		result, err := userli.sanitizeEmail("+tag@example.com")
+		s.NoError(err)
+		s.Equal("@example.com", result)
+	})
+
+	s.Run("different delimiter character", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("-"))
+		result, err := userli.sanitizeEmail("user-tag@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("delimiter not present in email", func() {
+		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
+		result, err := userli.sanitizeEmail("user@example.com")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("preserves domain with dots", func() {
+		result, err := s.userli.sanitizeEmail("user@mail.example.com")
+		s.NoError(err)
+		s.Equal("user@mail.example.com", result)
+	})
+
+	s.Run("preserves local part with dots", func() {
+		result, err := s.userli.sanitizeEmail("user.name@example.com")
+		s.NoError(err)
+		s.Equal("user.name@example.com", result)
 	})
 }
 

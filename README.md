@@ -11,6 +11,7 @@ The adapter is configured via environment variables:
 
 - `USERLI_TOKEN`: The token to authenticate against the userli API.
 - `USERLI_BASE_URL`: The base URL of the userli API.
+- `POSTFIX_RECIPIENT_DELIMITER`: The recipient delimiter used in Postfix (e.g., `+`). Default: empty.
 - `SOCKETMAP_LISTEN_ADDR`: The address to listen on for socketmap requests. Default: `:10001`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 
