@@ -69,7 +69,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 			activeConnWg.Add(1)
 			activeConnections.Inc()
 			connectionPoolUsage.Set(float64(len(connSemaphore)))
-			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnWg, addr)
+			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnWg)
 		default:
 			// Connection pool full, reject connection
 			log.WithField("addr", addr).Warn("Connection pool full, rejecting socketmap connection")
@@ -78,7 +78,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 	}
 }
 
-func handleSocketmapConnection(conn net.Conn, adapter *SocketmapAdapter, semaphore chan struct{}, wg *sync.WaitGroup, addr string) {
+func handleSocketmapConnection(conn net.Conn, adapter *SocketmapAdapter, semaphore chan struct{}, wg *sync.WaitGroup) {
 	defer func() {
 		_ = conn.Close()
 		<-semaphore // Release connection slot
