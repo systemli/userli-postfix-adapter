@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
+
+// validLocalPartRegex validates that the local part only contains allowed characters: a-z, 0-9, -, _, .
+var validLocalPartRegex = regexp.MustCompile(`^[a-z0-9\-_.]*$`)
 
 type UserliService interface {
 	GetAliases(ctx context.Context, email string) ([]string, error)
@@ -18,8 +24,9 @@ type UserliService interface {
 }
 
 type Userli struct {
-	token   string
-	baseURL string
+	token     string
+	baseURL   string
+	delimiter string
 
 	mu     sync.RWMutex // Protects Client field
 	Client *http.Client
@@ -46,6 +53,14 @@ func WithTransport(transport *http.Transport) Option {
 			Transport: transport,
 			Timeout:   time.Second * 10,
 		}
+	}
+}
+
+func WithDelimiter(delimiter string) Option {
+	return func(u *Userli) {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		u.delimiter = delimiter
 	}
 }
 
@@ -113,11 +128,13 @@ func NewUserli(token, baseURL string, opts ...Option) *Userli {
 }
 
 func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error) {
-	if !strings.Contains(email, "@") {
-		return []string{}, nil
+	sanitizedEmail, err := u.sanitizeEmail(email)
+	if err != nil {
+		log.WithError(err).WithField("email", email).Info("unable to process the alias")
+		return []string{}, err
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, sanitizedEmail))
 	if err != nil {
 		return []string{}, err
 	}
@@ -135,6 +152,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
 	if err != nil {
+		log.WithError(err).WithField("domain", domain).Info("unable to process the domain")
 		return false, err
 	}
 	defer resp.Body.Close()
@@ -149,11 +167,13 @@ func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 }
 
 func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
-	if !strings.Contains(email, "@") {
-		return false, nil
+	sanitizedEmail, err := u.sanitizeEmail(email)
+	if err != nil {
+		log.WithError(err).WithField("email", email).Info("unable to process the mailbox")
+		return false, err
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, sanitizedEmail))
 	if err != nil {
 		return false, err
 	}
@@ -169,11 +189,13 @@ func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 }
 
 func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error) {
-	if !strings.Contains(email, "@") {
-		return []string{}, nil
+	sanitizedEmail, err := u.sanitizeEmail(email)
+	if err != nil {
+		log.WithError(err).WithField("email", email).Info("unable to process the senders")
+		return []string{}, err
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, email))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, sanitizedEmail))
 	if err != nil {
 		return []string{}, err
 	}
@@ -243,4 +265,47 @@ func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+func (u *Userli) sanitizeEmail(email string) (string, error) {
+	// Normalize email: lowercase and remove whitespace
+	email = strings.ToLower(email)
+	email = strings.TrimSpace(email)
+
+	// Remove all non-visible characters (control characters, zero-width spaces, etc.)
+	email = strings.TrimFunc(email, func(r rune) bool {
+		return r < 33 || r == 127 || // ASCII control characters
+			r == 0x200B || // Zero-width space
+			r == 0x200C || // Zero-width non-joiner
+			r == 0x200D || // Zero-width joiner
+			r == 0xFEFF // Zero-width no-break space (BOM)
+	})
+
+	// Split email by @
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid email format: %s", email)
+	}
+
+	localPart := parts[0]
+	domain := parts[1]
+
+	// Remove recipient delimiter from local part if configured
+	if u.delimiter != "" {
+		if idx := strings.Index(localPart, u.delimiter); idx != -1 {
+			localPart = localPart[:idx]
+		}
+	}
+
+	// Validate local part matches allowed pattern
+	if !validLocalPartRegex.MatchString(localPart) {
+		return "", fmt.Errorf("invalid local part: %s", localPart)
+	}
+
+	// Validate that local part is not empty
+	if localPart == "" {
+		return "", fmt.Errorf("invalid email format: empty local part after sanitization")
+	}
+
+	return fmt.Sprintf("%s@%s", localPart, domain), nil
 }

@@ -11,7 +11,7 @@ import (
 
 func main() {
 	config := NewConfig()
-	userli := NewUserli(config.UserliToken, config.UserliBaseURL)
+	userli := NewUserli(config.UserliToken, config.UserliBaseURL, WithDelimiter(config.PostfixRecipientDelimiter))
 	socketmapAdapter := NewSocketmapAdapter(userli)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

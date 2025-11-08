@@ -14,6 +14,9 @@ type Config struct {
 	// UserliBaseURL is the base URL for the userli service.
 	UserliBaseURL string
 
+	// PostfixRecipientDelimiter is the recipient delimiter used by Postfix.
+	PostfixRecipientDelimiter string
+
 	// SocketmapListenAddr is the address to listen for socketmap requests.
 	SocketmapListenAddr string
 
@@ -55,6 +58,8 @@ func NewConfig() *Config {
 		log.Fatal("USERLI_TOKEN is required")
 	}
 
+	postfixRecipientDelimiter := os.Getenv("POSTFIX_RECIPIENT_DELIMITER")
+
 	socketmapListenAddr := os.Getenv("SOCKETMAP_LISTEN_ADDR")
 	if socketmapListenAddr == "" {
 		socketmapListenAddr = ":10001"
@@ -66,9 +71,10 @@ func NewConfig() *Config {
 	}
 
 	return &Config{
-		UserliBaseURL:       userliBaseURL,
-		UserliToken:         userliToken,
-		SocketmapListenAddr: socketmapListenAddr,
-		MetricsListenAddr:   metricsListenAddr,
+		UserliBaseURL:             userliBaseURL,
+		UserliToken:               userliToken,
+		PostfixRecipientDelimiter: postfixRecipientDelimiter,
+		SocketmapListenAddr:       socketmapListenAddr,
+		MetricsListenAddr:         metricsListenAddr,
 	}
 }
