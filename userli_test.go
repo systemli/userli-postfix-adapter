@@ -339,6 +339,108 @@ func (s *UserliTestSuite) TestSanitizeEmail() {
 		s.Equal("user@example.com", result)
 	})
 
+	s.Run("SRS0 address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("SRS0=hash=domain.com=user@forwarder.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("SRS1 address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("SRS1=hash=domain.com=user@forwarder.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("lowercase srs0 address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("srs0=hash=domain.com=user@forwarder.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("lowercase srs1 address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("srs1=hash=domain.com=user@forwarder.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("mixed case SrS0 address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("SrS0=hash=domain.com=user@forwarder.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("constant contact address is rejected due to invalid characters", func() {
+		result, err := s.userli.sanitizeEmail("a1vdek4eqtvi/ni3ked62sg==_1103304917473_t+iblfa0ee+fkpowpmt8pw==@in.constantcontact.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("normalizes to lowercase", func() {
+		result, err := s.userli.sanitizeEmail("User@Example.COM")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes leading and trailing whitespace", func() {
+		result, err := s.userli.sanitizeEmail("  user@example.com  ")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes zero-width space", func() {
+		// Zero-width space (U+200B) at beginning and end
+		result, err := s.userli.sanitizeEmail("\u200Buser@example.com\u200B")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes zero-width non-joiner", func() {
+		// Zero-width non-joiner (U+200C)
+		result, err := s.userli.sanitizeEmail("\u200Cuser@example.com\u200C")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes zero-width joiner", func() {
+		// Zero-width joiner (U+200D)
+		result, err := s.userli.sanitizeEmail("\u200Duser@example.com\u200D")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes BOM (zero-width no-break space)", func() {
+		// BOM / zero-width no-break space (U+FEFF)
+		result, err := s.userli.sanitizeEmail("\uFEFFuser@example.com\uFEFF")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes control characters", func() {
+		// ASCII control characters (tab, newline, carriage return)
+		result, err := s.userli.sanitizeEmail("\tuser@example.com\n")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("removes DEL character", func() {
+		// DEL character (127)
+		result, err := s.userli.sanitizeEmail("\x7Fuser@example.com\x7F")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
+	s.Run("combined normalization: uppercase, whitespace, and control chars", func() {
+		result, err := s.userli.sanitizeEmail("  \tUser@Example.COM\n\u200B  ")
+		s.NoError(err)
+		s.Equal("user@example.com", result)
+	})
+
 	s.Run("invalid email missing @", func() {
 		result, err := s.userli.sanitizeEmail("userexample.com")
 		s.Error(err)
@@ -367,10 +469,11 @@ func (s *UserliTestSuite) TestSanitizeEmail() {
 		s.Equal("user@example.com", result)
 	})
 
-	s.Run("no delimiter when not configured", func() {
+	s.Run("no delimiter configured rejects plus sign", func() {
 		result, err := s.userli.sanitizeEmail("user+tag@example.com")
-		s.NoError(err)
-		s.Equal("user+tag@example.com", result)
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
 	})
 
 	s.Run("removes delimiter with multiple occurrences", func() {
@@ -387,11 +490,12 @@ func (s *UserliTestSuite) TestSanitizeEmail() {
 		s.Equal("user@example.com", result)
 	})
 
-	s.Run("delimiter at start of local part", func() {
+	s.Run("delimiter at start of local part results in error", func() {
 		userli := NewUserli("insecure", "http://localhost:8000", WithDelimiter("+"))
 		result, err := userli.sanitizeEmail("+tag@example.com")
-		s.NoError(err)
-		s.Equal("@example.com", result)
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "empty local part after sanitization")
 	})
 
 	s.Run("different delimiter character", func() {
@@ -418,6 +522,58 @@ func (s *UserliTestSuite) TestSanitizeEmail() {
 		result, err := s.userli.sanitizeEmail("user.name@example.com")
 		s.NoError(err)
 		s.Equal("user.name@example.com", result)
+	})
+
+	s.Run("allows hyphens in local part", func() {
+		result, err := s.userli.sanitizeEmail("user-name@example.com")
+		s.NoError(err)
+		s.Equal("user-name@example.com", result)
+	})
+
+	s.Run("allows underscores in local part", func() {
+		result, err := s.userli.sanitizeEmail("user_name@example.com")
+		s.NoError(err)
+		s.Equal("user_name@example.com", result)
+	})
+
+	s.Run("allows numbers in local part", func() {
+		result, err := s.userli.sanitizeEmail("user123@example.com")
+		s.NoError(err)
+		s.Equal("user123@example.com", result)
+	})
+
+	s.Run("allows alphanumeric with dots, hyphens, underscores", func() {
+		result, err := s.userli.sanitizeEmail("user.name-123_test@example.com")
+		s.NoError(err)
+		s.Equal("user.name-123_test@example.com", result)
+	})
+
+	s.Run("rejects local part with slash", func() {
+		result, err := s.userli.sanitizeEmail("user/name@example.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("rejects local part with equals sign", func() {
+		result, err := s.userli.sanitizeEmail("user=name@example.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("rejects local part with special characters", func() {
+		result, err := s.userli.sanitizeEmail("user!name@example.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
+	})
+
+	s.Run("rejects local part with hash symbol", func() {
+		result, err := s.userli.sanitizeEmail("user#name@example.com")
+		s.Error(err)
+		s.Equal("", result)
+		s.Contains(err.Error(), "invalid local part")
 	})
 }
 

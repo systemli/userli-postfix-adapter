@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
+
+// validLocalPartRegex validates that the local part only contains allowed characters: a-z, 0-9, -, _, .
+var validLocalPartRegex = regexp.MustCompile(`^[a-z0-9\-_.]*$`)
 
 type UserliService interface {
 	GetAliases(ctx context.Context, email string) ([]string, error)
@@ -258,7 +262,20 @@ func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {
 }
 
 func (u *Userli) sanitizeEmail(email string) (string, error) {
-	// Split local part and domain
+	// Normalize email: lowercase and remove whitespace
+	email = strings.ToLower(email)
+	email = strings.TrimSpace(email)
+
+	// Remove all non-visible characters (control characters, zero-width spaces, etc.)
+	email = strings.TrimFunc(email, func(r rune) bool {
+		return r < 33 || r == 127 || // ASCII control characters
+			r == 0x200B || // Zero-width space
+			r == 0x200C || // Zero-width non-joiner
+			r == 0x200D || // Zero-width joiner
+			r == 0xFEFF // Zero-width no-break space (BOM)
+	})
+
+	// Split email by @
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
 		return "", fmt.Errorf("invalid email format: %s", email)
@@ -272,6 +289,16 @@ func (u *Userli) sanitizeEmail(email string) (string, error) {
 		if idx := strings.Index(localPart, u.delimiter); idx != -1 {
 			localPart = localPart[:idx]
 		}
+	}
+
+	// Validate local part matches allowed pattern
+	if !validLocalPartRegex.MatchString(localPart) {
+		return "", fmt.Errorf("invalid local part: %s", localPart)
+	}
+
+	// Validate that local part is not empty
+	if localPart == "" {
+		return "", fmt.Errorf("invalid email format: empty local part after sanitization")
 	}
 
 	return fmt.Sprintf("%s@%s", localPart, domain), nil
