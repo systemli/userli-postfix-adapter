@@ -45,7 +45,7 @@ func (s *UserliTestSuite) TestGetAliases() {
 
 	s.Run("no email", func() {
 		aliases, err := s.userli.GetAliases(context.Background(), "alias")
-		s.Error(err)
+		s.NoError(err)
 		s.Empty(aliases)
 	})
 
@@ -134,7 +134,7 @@ func (s *UserliTestSuite) TestGetMailbox() {
 
 	s.Run("no email", func() {
 		active, err := s.userli.GetMailbox(context.Background(), "user")
-		s.Error(err)
+		s.NoError(err)
 		s.False(active)
 	})
 
@@ -190,7 +190,7 @@ func (s *UserliTestSuite) TestGetSenders() {
 
 	s.Run("no email", func() {
 		senders, err := s.userli.GetSenders(context.Background(), "user")
-		s.Error(err)
+		s.NoError(err)
 		s.Empty(senders)
 	})
 

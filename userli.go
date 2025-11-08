@@ -131,7 +131,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
 		log.WithError(err).WithField("email", email).Info("unable to process the alias")
-		return []string{}, err
+		return []string{}, nil
 	}
 
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, sanitizedEmail))
@@ -170,7 +170,7 @@ func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
 		log.WithError(err).WithField("email", email).Info("unable to process the mailbox")
-		return false, err
+		return false, nil
 	}
 
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, sanitizedEmail))
@@ -192,7 +192,7 @@ func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error)
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
 		log.WithError(err).WithField("email", email).Info("unable to process the senders")
-		return []string{}, err
+		return []string{}, nil
 	}
 
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, sanitizedEmail))
