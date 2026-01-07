@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -304,5 +305,253 @@ sasl_username=test@example.org
 
 	if !strings.HasPrefix(response, "action=DUNNO") {
 		t.Errorf("Expected action=DUNNO, got %s", response)
+	}
+}
+
+func TestPolicyServer_HandleConnection(t *testing.T) {
+	mockClient := &MockUserliServiceForPolicy{
+		quota: &Quota{PerHour: 100, PerDay: 1000},
+	}
+	rateLimiter := &RateLimiter{
+		counters: make(map[string]*senderCounter),
+	}
+	server := NewPolicyServer(mockClient, rateLimiter)
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	// Start HandleConnection in background
+	done := make(chan struct{})
+	go func() {
+		server.HandleConnection(context.Background(), serverConn)
+		close(done)
+	}()
+
+	// Send policy request
+	request := "request=smtpd_access_policy\nprotocol_state=END-OF-MESSAGE\nsender=test@example.org\n\n"
+	_, err := clientConn.Write([]byte(request))
+	if err != nil {
+		t.Fatalf("Failed to write request: %v", err)
+	}
+
+	// Read response
+	reader := bufio.NewReader(clientConn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+
+	if !strings.HasPrefix(response, "action=DUNNO") {
+		t.Errorf("Expected action=DUNNO, got %s", response)
+	}
+
+	// Close client connection to trigger EOF and exit handler
+	clientConn.Close()
+
+	// Wait for handler to exit
+	select {
+	case <-done:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleConnection did not exit after client disconnect")
+	}
+}
+
+func TestPolicyServer_HandleConnection_MultipleRequests(t *testing.T) {
+	mockClient := &MockUserliServiceForPolicy{
+		quota: &Quota{PerHour: 100, PerDay: 1000},
+	}
+	rateLimiter := &RateLimiter{
+		counters: make(map[string]*senderCounter),
+	}
+	server := NewPolicyServer(mockClient, rateLimiter)
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go server.HandleConnection(context.Background(), serverConn)
+
+	reader := bufio.NewReader(clientConn)
+
+	// Send first request
+	request1 := "request=smtpd_access_policy\nprotocol_state=END-OF-MESSAGE\nsender=user1@example.org\n\n"
+	_, err := clientConn.Write([]byte(request1))
+	if err != nil {
+		t.Fatalf("Failed to write first request: %v", err)
+	}
+
+	// Read first response (two lines: action line + empty line)
+	response1, _ := reader.ReadString('\n')
+	reader.ReadString('\n') // consume empty line
+	if !strings.HasPrefix(response1, "action=DUNNO") {
+		t.Errorf("Expected first response action=DUNNO, got %s", response1)
+	}
+
+	// Send second request
+	request2 := "request=smtpd_access_policy\nprotocol_state=RCPT\nsender=user2@example.org\n\n"
+	_, err = clientConn.Write([]byte(request2))
+	if err != nil {
+		t.Fatalf("Failed to write second request: %v", err)
+	}
+
+	// Read second response
+	response2, _ := reader.ReadString('\n')
+	if !strings.HasPrefix(response2, "action=DUNNO") {
+		t.Errorf("Expected second response action=DUNNO, got %s", response2)
+	}
+}
+
+func TestPolicyServer_StartPolicyServer(t *testing.T) {
+	mockClient := &MockUserliServiceForPolicy{
+		quota: &Quota{PerHour: 100, PerDay: 1000},
+	}
+	rateLimiter := &RateLimiter{
+		counters: make(map[string]*senderCounter),
+	}
+	server := NewPolicyServer(mockClient, rateLimiter)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	// Start server on random port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	wg.Add(1)
+	go StartPolicyServer(ctx, &wg, addr, server)
+
+	// Give server time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Connect and send request
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+
+	request := "request=smtpd_access_policy\nprotocol_state=END-OF-MESSAGE\nsender=test@example.org\n\n"
+	_, _ = conn.Write([]byte(request))
+
+	reader := bufio.NewReader(conn)
+	response, _ := reader.ReadString('\n')
+	conn.Close()
+
+	if !strings.HasPrefix(response, "action=DUNNO") {
+		t.Errorf("Expected action=DUNNO, got %s", response)
+	}
+
+	// Shutdown
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server did not shutdown within timeout")
+	}
+}
+
+func TestPolicyServer_ReadRequest_AllFields(t *testing.T) {
+	input := `request=smtpd_access_policy
+protocol_state=END-OF-MESSAGE
+protocol_name=ESMTP
+sender=user@example.org
+recipient=recipient@example.com
+recipient_count=5
+client_address=192.168.1.1
+client_name=mail.example.org
+sasl_method=PLAIN
+sasl_username=user@example.org
+size=12345
+queue_id=ABC123
+instance=def456
+encryption_cipher=TLS_AES_256_GCM_SHA384
+
+`
+	reader := bufio.NewReader(strings.NewReader(input))
+	server := &PolicyServer{}
+
+	req, err := server.readRequest(reader)
+	if err != nil {
+		t.Fatalf("Failed to read request: %v", err)
+	}
+
+	// Verify all fields
+	if req.Request != "smtpd_access_policy" {
+		t.Errorf("Request: got %s, want smtpd_access_policy", req.Request)
+	}
+	if req.ProtocolState != "END-OF-MESSAGE" {
+		t.Errorf("ProtocolState: got %s, want END-OF-MESSAGE", req.ProtocolState)
+	}
+	if req.ProtocolName != "ESMTP" {
+		t.Errorf("ProtocolName: got %s, want ESMTP", req.ProtocolName)
+	}
+	if req.Sender != "user@example.org" {
+		t.Errorf("Sender: got %s, want user@example.org", req.Sender)
+	}
+	if req.Recipient != "recipient@example.com" {
+		t.Errorf("Recipient: got %s, want recipient@example.com", req.Recipient)
+	}
+	if req.RecipientCount != "5" {
+		t.Errorf("RecipientCount: got %s, want 5", req.RecipientCount)
+	}
+	if req.ClientAddress != "192.168.1.1" {
+		t.Errorf("ClientAddress: got %s, want 192.168.1.1", req.ClientAddress)
+	}
+	if req.ClientName != "mail.example.org" {
+		t.Errorf("ClientName: got %s, want mail.example.org", req.ClientName)
+	}
+	if req.SaslMethod != "PLAIN" {
+		t.Errorf("SaslMethod: got %s, want PLAIN", req.SaslMethod)
+	}
+	if req.SaslUsername != "user@example.org" {
+		t.Errorf("SaslUsername: got %s, want user@example.org", req.SaslUsername)
+	}
+	if req.Size != "12345" {
+		t.Errorf("Size: got %s, want 12345", req.Size)
+	}
+	if req.QueueID != "ABC123" {
+		t.Errorf("QueueID: got %s, want ABC123", req.QueueID)
+	}
+	if req.Instance != "def456" {
+		t.Errorf("Instance: got %s, want def456", req.Instance)
+	}
+	if req.EncryptionCipher != "TLS_AES_256_GCM_SHA384" {
+		t.Errorf("EncryptionCipher: got %s, want TLS_AES_256_GCM_SHA384", req.EncryptionCipher)
+	}
+}
+
+func TestPolicyServer_ReadRequest_InvalidLine(t *testing.T) {
+	// Line without equals sign should be skipped
+	input := `request=smtpd_access_policy
+invalidline
+sender=user@example.org
+
+`
+	reader := bufio.NewReader(strings.NewReader(input))
+	server := &PolicyServer{}
+
+	req, err := server.readRequest(reader)
+	if err != nil {
+		t.Fatalf("Failed to read request: %v", err)
+	}
+
+	if req.Request != "smtpd_access_policy" {
+		t.Errorf("Request: got %s, want smtpd_access_policy", req.Request)
+	}
+	if req.Sender != "user@example.org" {
+		t.Errorf("Sender: got %s, want user@example.org", req.Sender)
 	}
 }
