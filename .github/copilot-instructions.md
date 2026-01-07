@@ -9,6 +9,8 @@ This is a Postfix socketmap adapter for the [Userli](https://github.com/systemli
 ### Core Components
 
 - **Socketmap Server** (`server.go`): TCP server implementing Postfix's socketmap protocol on port 10001
+- **Policy Server** (`policy.go`): TCP server implementing Postfix SMTP Access Policy Delegation for rate limiting on port 10003
+- **Rate Limiter** (`ratelimit.go`): In-memory rate limiting with sliding window for per-hour and per-day quotas
 - **Userli Client** (`userli.go`): REST API client for querying Userli backend
 - **Metrics Server** (`prometheus.go`): Prometheus metrics endpoint on port 10002
 - **Adapter Logic** (`adapter.go`): Request routing and response formatting for four map types (alias, domain, mailbox, senders)
@@ -35,7 +37,7 @@ cp .env.dist .env
 # Start full stack (adapter + postfix + userli + mariadb + mailcatcher)
 docker-compose up
 
-# Adapter runs on :10001 (socketmap) and :10002 (metrics)
+# Adapter runs on :10001 (socketmap), :10002 (metrics), and :10003 (policy)
 ```
 
 ### Testing Postfix Integration
@@ -76,6 +78,7 @@ docker build -t systemli/userli-postfix-adapter .
 - Defaults defined in `config.go:NewConfig()`:
   - `USERLI_BASE_URL`: `http://localhost:8000`
   - `SOCKETMAP_LISTEN_ADDR`: `:10001`
+  - `POLICY_LISTEN_ADDR`: `:10003`
   - `METRICS_LISTEN_ADDR`: `:10002`
   - `LOG_LEVEL`: `info`
   - `LOG_FORMAT`: `text` (or `json`)
@@ -119,6 +122,8 @@ The adapter in `adapter.go` follows this flow:
 
 - `main.go` - Entry point, initializes config and starts servers
 - `server.go` - TCP server and socketmap protocol implementation
+- `policy.go` - Policy server for rate limiting (Postfix SMTP Access Policy Delegation)
+- `ratelimit.go` - In-memory rate limiter with sliding window
 - `adapter.go` - Request routing and Userli API interaction
 - `userli.go` - HTTP client with Bearer token authentication
 - `config.go` - Environment-based configuration
@@ -127,10 +132,12 @@ The adapter in `adapter.go` follows this flow:
 
 ## External Dependencies
 
-- **Userli API**: REST endpoints at `/api/postfix/{alias,domain,mailbox,senders}?query={key}`
-  - Returns JSON: `{"exists": true/false, "result": "value"}`
+- **Userli API**: REST endpoints at `/api/postfix/{alias,domain,mailbox,senders,quota}/{key}`
+  - Socketmap endpoints return JSON arrays or booleans
+  - Quota endpoint returns: `{"per_hour": int, "per_day": int}` (0 = unlimited)
   - Requires Bearer token authentication
 - **Postfix Configuration**: Uses `socketmap:inet:adapter:10001:{mapName}` in virtual\_\*\_maps directives
+- **Policy Server**: Uses `check_policy_service inet:adapter:10003` in `smtpd_end_of_data_restrictions`
 - **Prometheus**: Scrapes metrics from `:10002/metrics`
 
 ## Common Pitfalls

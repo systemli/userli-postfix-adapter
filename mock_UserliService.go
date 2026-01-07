@@ -237,6 +237,74 @@ func (_c *MockUserliService_GetMailbox_Call) RunAndReturn(run func(ctx context.C
 	return _c
 }
 
+// GetQuota provides a mock function for the type MockUserliService
+func (_mock *MockUserliService) GetQuota(ctx context.Context, email string) (*Quota, error) {
+	ret := _mock.Called(ctx, email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetQuota")
+	}
+
+	var r0 *Quota
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*Quota, error)); ok {
+		return returnFunc(ctx, email)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *Quota); ok {
+		r0 = returnFunc(ctx, email)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*Quota)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, email)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockUserliService_GetQuota_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetQuota'
+type MockUserliService_GetQuota_Call struct {
+	*mock.Call
+}
+
+// GetQuota is a helper method to define mock.On call
+//   - ctx context.Context
+//   - email string
+func (_e *MockUserliService_Expecter) GetQuota(ctx interface{}, email interface{}) *MockUserliService_GetQuota_Call {
+	return &MockUserliService_GetQuota_Call{Call: _e.mock.On("GetQuota", ctx, email)}
+}
+
+func (_c *MockUserliService_GetQuota_Call) Run(run func(ctx context.Context, email string)) *MockUserliService_GetQuota_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockUserliService_GetQuota_Call) Return(quota *Quota, err error) *MockUserliService_GetQuota_Call {
+	_c.Call.Return(quota, err)
+	return _c
+}
+
+func (_c *MockUserliService_GetQuota_Call) RunAndReturn(run func(ctx context.Context, email string) (*Quota, error)) *MockUserliService_GetQuota_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetSenders provides a mock function for the type MockUserliService
 func (_mock *MockUserliService) GetSenders(ctx context.Context, email string) ([]string, error) {
 	ret := _mock.Called(ctx, email)

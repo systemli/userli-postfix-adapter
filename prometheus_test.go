@@ -124,11 +124,14 @@ func (s *PrometheusTestSuite) TestStartMetricsServer() {
 		// Use a random available port
 		listenAddr := "127.0.0.1:0"
 
+		// Create a rate limiter for the test
+		rateLimiter := NewRateLimiter()
+
 		// Start server in goroutine
 		serverStarted := make(chan struct{})
 		go func() {
 			close(serverStarted)
-			StartMetricsServer(ctx, listenAddr, mockClient)
+			StartMetricsServer(ctx, listenAddr, mockClient, rateLimiter)
 		}()
 
 		// Wait for server to start

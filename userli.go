@@ -21,6 +21,13 @@ type UserliService interface {
 	GetDomain(ctx context.Context, domain string) (bool, error)
 	GetMailbox(ctx context.Context, email string) (bool, error)
 	GetSenders(ctx context.Context, email string) ([]string, error)
+	GetQuota(ctx context.Context, email string) (*Quota, error)
+}
+
+// Quota represents the sending quota limits for a user
+type Quota struct {
+	PerHour int `json:"per_hour"`
+	PerDay  int `json:"per_day"`
 }
 
 type Userli struct {
@@ -208,6 +215,28 @@ func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error)
 	}
 
 	return senders, nil
+}
+
+func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
+	sanitizedEmail, err := u.sanitizeEmail(email)
+	if err != nil {
+		log.WithError(err).WithField("email", email).Info("unable to process the quota")
+		return nil, err
+	}
+
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/quota/%s", u.baseURL, sanitizedEmail))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var quota Quota
+	err = json.NewDecoder(resp.Body).Decode(&quota)
+	if err != nil {
+		return nil, err
+	}
+
+	return &quota, nil
 }
 
 func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {

@@ -57,11 +57,49 @@ var (
 		Name: "userli_postfix_adapter_health_check_status",
 		Help: "Health check status (1 = healthy, 0 = unhealthy)",
 	})
+
+	// Policy server metrics
+	policyActiveConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "userli_postfix_adapter_policy_active_connections",
+		Help: "Number of currently active policy connections",
+	})
+
+	policyRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_policy_requests_total",
+		Help: "Total number of policy requests",
+	}, []string{"stage", "action"})
+
+	policyRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "userli_postfix_adapter_policy_request_duration_seconds",
+		Help:    "Duration of policy requests",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 10),
+	}, []string{"stage", "action"})
+
+	quotaExceededTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_quota_exceeded_total",
+		Help: "Total number of messages rejected due to quota",
+	})
+
+	quotaChecksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_quota_checks_total",
+		Help: "Total number of quota checks performed",
+	}, []string{"result"})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
-func StartMetricsServer(ctx context.Context, listenAddr string, userliClient UserliService) {
+func StartMetricsServer(ctx context.Context, listenAddr string, userliClient UserliService, rateLimiter *RateLimiter) {
 	registry := prometheus.NewRegistry()
+
+	// Create tracked senders gauge with closure capturing the rate limiter
+	trackedSenders := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "userli_postfix_adapter_tracked_senders",
+		Help: "Number of senders currently tracked by rate limiter",
+	}, func() float64 {
+		if rateLimiter != nil {
+			return float64(rateLimiter.SenderCount())
+		}
+		return 0
+	})
 
 	registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -73,6 +111,12 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		httpClientDuration,
 		httpClientRequestsTotal,
 		healthCheckStatus,
+		policyActiveConnections,
+		policyRequestsTotal,
+		policyRequestDuration,
+		quotaExceededTotal,
+		quotaChecksTotal,
+		trackedSenders,
 	)
 
 	mux := http.NewServeMux()
