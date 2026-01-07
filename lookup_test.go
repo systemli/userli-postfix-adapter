@@ -39,10 +39,10 @@ func (s *ServerTestSuite) SetupTest() {
 func (s *ServerTestSuite) TearDownTest() {
 }
 
-// TestStartSocketmapServer_BasicFunctionality tests basic server startup and shutdown
-func (s *ServerTestSuite) TestStartSocketmapServer_BasicFunctionality() {
+// TestStartLookupServer_BasicFunctionality tests basic server startup and shutdown
+func (s *ServerTestSuite) TestStartLookupServer_BasicFunctionality() {
 	mock := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mock)
+	server := NewLookupServer(mock)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -51,7 +51,7 @@ func (s *ServerTestSuite) TestStartSocketmapServer_BasicFunctionality() {
 	addr := "127.0.0.1:0"
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, addr, adapter)
+	go StartLookupServer(ctx, &wg, addr, server)
 
 	// Give the server a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -74,10 +74,10 @@ func (s *ServerTestSuite) TestStartSocketmapServer_BasicFunctionality() {
 	}
 }
 
-// TestStartSocketmapServer_InvalidAddress tests server behavior with invalid address
-func (s *ServerTestSuite) TestStartSocketmapServer_InvalidAddress() {
+// TestStartLookupServer_InvalidAddress tests server behavior with invalid address
+func (s *ServerTestSuite) TestStartLookupServer_InvalidAddress() {
 	mock := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mock)
+	server := NewLookupServer(mock)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -87,7 +87,7 @@ func (s *ServerTestSuite) TestStartSocketmapServer_InvalidAddress() {
 	addr := "invalid-address:99999"
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, addr, adapter)
+	go StartLookupServer(ctx, &wg, addr, server)
 
 	// Wait for the function to return (should return quickly due to error)
 	done := make(chan struct{})
@@ -104,12 +104,12 @@ func (s *ServerTestSuite) TestStartSocketmapServer_InvalidAddress() {
 	}
 }
 
-// TestStartSocketmapServer_ConnectionHandling tests connection acceptance and handling
-func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionHandling() {
+// TestStartLookupServer_ConnectionHandling tests connection acceptance and handling
+func (s *ServerTestSuite) TestStartLookupServer_ConnectionHandling() {
 	mockService := &MockUserliService{}
 	// Mock a successful domain lookup
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
-	adapter := NewSocketmapAdapter(mockService)
+	server := NewLookupServer(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -119,10 +119,10 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionHandling() {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	addr := listener.Addr().String()
-	listener.Close() // Close so StartSocketmapServer can bind to it
+	listener.Close() // Close so StartLookupServer can bind to it
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, addr, adapter)
+	go StartLookupServer(ctx, &wg, addr, server)
 
 	// Give the server a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -145,10 +145,10 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionHandling() {
 	mockService.AssertExpectations(s.T())
 }
 
-// TestStartSocketmapServer_GracefulShutdown tests graceful shutdown with active connections
-func (s *ServerTestSuite) TestStartSocketmapServer_GracefulShutdown() {
+// TestStartLookupServer_GracefulShutdown tests graceful shutdown with active connections
+func (s *ServerTestSuite) TestStartLookupServer_GracefulShutdown() {
 	mockService := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mockService)
+	server := NewLookupServer(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -160,7 +160,7 @@ func (s *ServerTestSuite) TestStartSocketmapServer_GracefulShutdown() {
 	listener.Close()
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, addr, adapter)
+	go StartLookupServer(ctx, &wg, addr, server)
 
 	// Give the server a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -196,19 +196,19 @@ func (s *ServerTestSuite) TestStartSocketmapServer_GracefulShutdown() {
 	}
 }
 
-// TestHandleSocketmapConnection tests the connection handler function
-func (s *ServerTestSuite) TestHandleSocketmapConnection() {
+// TestHandleLookupConnection tests the connection handler function
+func (s *ServerTestSuite) TestHandleLookupConnection() {
 	mockService := &MockUserliService{}
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
-	adapter := NewSocketmapAdapter(mockService)
+	server := NewLookupServer(mockService)
 
 	// Create a pipe to simulate a connection
-	server, client := net.Pipe()
-	defer server.Close()
+	serverConn, client := net.Pipe()
+	defer serverConn.Close()
 	defer client.Close()
 
 	// Start the connection handler
-	go adapter.HandleConnection(context.Background(), server)
+	go server.HandleConnection(context.Background(), serverConn)
 
 	// Send a request from the client side
 	request := "18:domain example.com,"
@@ -223,10 +223,10 @@ func (s *ServerTestSuite) TestHandleSocketmapConnection() {
 	mockService.AssertExpectations(s.T())
 }
 
-// TestStartSocketmapServer_ConnectionPoolLimit tests connection pool limits
-func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionPoolLimit() {
+// TestStartLookupServer_ConnectionPoolLimit tests connection pool limits
+func (s *ServerTestSuite) TestStartLookupServer_ConnectionPoolLimit() {
 	mockService := &MockUserliService{}
-	adapter := NewSocketmapAdapter(mockService)
+	server := NewLookupServer(mockService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -239,7 +239,7 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionPoolLimit() {
 	listener.Close()
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, addr, adapter)
+	go StartLookupServer(ctx, &wg, addr, server)
 
 	// Give the server a moment to start
 	time.Sleep(100 * time.Millisecond)
@@ -268,19 +268,19 @@ func (s *ServerTestSuite) TestStartSocketmapServer_ConnectionPoolLimit() {
 	time.Sleep(200 * time.Millisecond)
 }
 
-// TestHandleSocketmapConnection_MultipleRequests tests handling multiple requests on same connection
-func (s *ServerTestSuite) TestHandleSocketmapConnection_MultipleRequests() {
+// TestHandleLookupConnection_MultipleRequests tests handling multiple requests on same connection
+func (s *ServerTestSuite) TestHandleLookupConnection_MultipleRequests() {
 	mockService := &MockUserliService{}
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
 	mockService.On("GetDomain", mock.Anything, "example.org").Return(false, nil)
-	adapter := NewSocketmapAdapter(mockService)
+	server := NewLookupServer(mockService)
 
-	server, client := net.Pipe()
-	defer server.Close()
+	serverConn, client := net.Pipe()
+	defer serverConn.Close()
 	defer client.Close()
 
 	// Start the connection handler
-	go adapter.HandleConnection(context.Background(), server)
+	go server.HandleConnection(context.Background(), serverConn)
 
 	// Send first request
 	request1 := "18:domain example.com,"

@@ -28,18 +28,19 @@ func (r *SocketmapResponse) String() string {
 	return fmt.Sprintf("%s %s", r.Status, r.Data)
 }
 
-// SocketmapAdapter handles socketmap protocol requests
-type SocketmapAdapter struct {
+// LookupServer handles Postfix socketmap protocol requests for lookups.
+// It implements the ConnectionHandler interface.
+type LookupServer struct {
 	client UserliService
 }
 
-// NewSocketmapAdapter creates a new SocketmapAdapter with the given UserliService
-func NewSocketmapAdapter(client UserliService) *SocketmapAdapter {
-	return &SocketmapAdapter{client: client}
+// NewLookupServer creates a new LookupServer with the given UserliService
+func NewLookupServer(client UserliService) *LookupServer {
+	return &LookupServer{client: client}
 }
 
-// StartSocketmapServer starts the socketmap server on the given address
-func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, adapter *SocketmapAdapter) {
+// StartLookupServer starts the lookup server on the given address
+func StartLookupServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *LookupServer) {
 	config := TCPServerConfig{
 		Name: "socketmap",
 		Addr: addr,
@@ -51,12 +52,12 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 		},
 	}
 
-	StartTCPServer(ctx, wg, config, adapter)
+	StartTCPServer(ctx, wg, config, server)
 }
 
-// HandleConnection implements ConnectionHandler interface for SocketmapAdapter.
+// HandleConnection implements ConnectionHandler interface for LookupServer.
 // It processes socketmap protocol requests, supporting persistent connections with multiple requests.
-func (s *SocketmapAdapter) HandleConnection(ctx context.Context, conn net.Conn) {
+func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
 			logger.Error("Error closing connection", zap.Error(err))
@@ -131,7 +132,7 @@ func (s *SocketmapAdapter) HandleConnection(ctx context.Context, conn net.Conn) 
 }
 
 // handleAlias processes alias lookup requests
-func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleAlias(ctx context.Context, key string) *SocketmapResponse {
 	aliases, err := s.client.GetAliases(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching aliases", zap.String("key", key), zap.Error(err))
@@ -146,7 +147,7 @@ func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *Socketm
 }
 
 // handleDomain processes domain lookup requests
-func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleDomain(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetDomain(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching domain", zap.String("key", key), zap.Error(err))
@@ -161,7 +162,7 @@ func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *Socket
 }
 
 // handleMailbox processes mailbox lookup requests
-func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetMailbox(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching mailbox", zap.String("key", key), zap.Error(err))
@@ -176,7 +177,7 @@ func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *Socke
 }
 
 // handleSenders processes senders lookup requests
-func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleSenders(ctx context.Context, key string) *SocketmapResponse {
 	senders, err := s.client.GetSenders(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching senders", zap.String("key", key), zap.Error(err))
@@ -191,7 +192,7 @@ func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *Socke
 }
 
 // writeResponse sends a socketmap response back to the client
-func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
+func (s *LookupServer) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
 	var status string
 	switch response.Status {
 	case "OK":
