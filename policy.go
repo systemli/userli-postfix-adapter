@@ -33,72 +33,22 @@ func NewPolicyServer(ctx context.Context, client UserliService, rateLimiter *Rat
 
 // StartPolicyServer starts the policy server on the given address
 func StartPolicyServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *PolicyServer) {
-	defer wg.Done()
-
-	connSemaphore := make(chan struct{}, MaxConcurrentConnections)
-	var activeConnWg sync.WaitGroup
-
-	lc := net.ListenConfig{
-		KeepAlive: KeepAliveTimeout,
-	}
-
-	listener, err := lc.Listen(ctx, "tcp", addr)
-	if err != nil {
-		log.WithError(err).WithField("addr", addr).Error("Failed to create policy listener")
-		return
-	}
-	defer listener.Close()
-
-	// Graceful shutdown handler
-	go func() {
-		<-ctx.Done()
-		log.WithField("addr", addr).Info("Shutting down policy server...")
-		listener.Close()
-		activeConnWg.Wait()
-		log.WithField("addr", addr).Info("All policy connections closed")
-	}()
-
-	log.WithField("addr", addr).Info("Policy server started")
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			log.WithError(err).WithField("addr", addr).Error("Accept failed")
-			continue
-		}
-
-		select {
-		case connSemaphore <- struct{}{}:
-			activeConnWg.Add(1)
+	config := TCPServerConfig{
+		Name: "policy",
+		Addr: addr,
+		OnConnectionAcquired: func() {
 			policyActiveConnections.Inc()
-			go server.handleConnection(conn, connSemaphore, &activeConnWg)
-		default:
-			log.WithField("addr", addr).Warn("Connection pool full, rejecting policy connection")
-			conn.Close()
-		}
+		},
+		OnConnectionReleased: func() {
+			policyActiveConnections.Dec()
+		},
 	}
+
+	StartTCPServer(ctx, wg, config, server)
 }
 
-// handleConnection processes a single policy connection
-func (p *PolicyServer) handleConnection(conn net.Conn, semaphore chan struct{}, wg *sync.WaitGroup) {
-	defer func() {
-		conn.Close()
-		<-semaphore
-		policyActiveConnections.Dec()
-		wg.Done()
-	}()
-
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		_ = tcpConn.SetKeepAlive(true)
-		_ = tcpConn.SetKeepAlivePeriod(KeepAliveTimeout)
-	}
-
-	deadline := time.Now().Add(ConnectionTimeout)
-	_ = conn.SetDeadline(deadline)
-
+// HandleConnection implements ConnectionHandler interface for PolicyServer
+func (p *PolicyServer) HandleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
