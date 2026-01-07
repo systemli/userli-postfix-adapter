@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // PolicyServer implements a Postfix SMTP Access Policy Delegation server
@@ -19,15 +19,13 @@ import (
 type PolicyServer struct {
 	client      UserliService
 	rateLimiter *RateLimiter
-	ctx         context.Context
 }
 
 // NewPolicyServer creates a new PolicyServer with the given UserliService
-func NewPolicyServer(ctx context.Context, client UserliService, rateLimiter *RateLimiter) *PolicyServer {
+func NewPolicyServer(client UserliService, rateLimiter *RateLimiter) *PolicyServer {
 	return &PolicyServer{
 		client:      client,
 		rateLimiter: rateLimiter,
-		ctx:         ctx,
 	}
 }
 
@@ -48,7 +46,7 @@ func StartPolicyServer(ctx context.Context, wg *sync.WaitGroup, addr string, ser
 }
 
 // HandleConnection implements ConnectionHandler interface for PolicyServer
-func (p *PolicyServer) HandleConnection(conn net.Conn) {
+func (p *PolicyServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -57,16 +55,16 @@ func (p *PolicyServer) HandleConnection(conn net.Conn) {
 		request, err := p.readRequest(reader)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.WithError(err).Debug("Failed to read policy request")
+				logger.Debug("Failed to read policy request", zap.Error(err))
 			}
 			return
 		}
 
-		response := p.handleRequest(request)
+		response := p.handleRequest(ctx, request)
 
 		_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 		if err := p.writeResponse(conn, response); err != nil {
-			log.WithError(err).Error("Failed to write policy response")
+			logger.Error("Failed to write policy response", zap.Error(err))
 			return
 		}
 	}
@@ -152,14 +150,13 @@ func (p *PolicyServer) readRequest(reader *bufio.Reader) (*PolicyRequest, error)
 }
 
 // handleRequest processes a policy request and returns an action
-func (p *PolicyServer) handleRequest(req *PolicyRequest) string {
+func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) string {
 	startTime := time.Now()
 
-	log.WithFields(log.Fields{
-		"sender":        req.Sender,
-		"sasl_username": req.SaslUsername,
-		"protocol":      req.ProtocolState,
-	}).Debug("Processing policy request")
+	logger.Debug("Processing policy request",
+		zap.String("sender", req.Sender),
+		zap.String("sasl_username", req.SaslUsername),
+		zap.String("protocol", req.ProtocolState))
 
 	// Only check at END-OF-MESSAGE stage for outgoing mail
 	// This ensures we only count messages that will actually be sent
@@ -177,20 +174,21 @@ func (p *PolicyServer) handleRequest(req *PolicyRequest) string {
 	}
 
 	if sender == "" {
-		log.Debug("No sender identity found, allowing message")
+		logger.Debug("No sender identity found, allowing message")
 		policyRequestsTotal.WithLabelValues("check", "dunno").Inc()
 		policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())
 		return "DUNNO"
 	}
 
 	// Fetch quota from Userli API
-	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
+	quotaCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	quota, err := p.client.GetQuota(ctx, sender)
+	quota, err := p.client.GetQuota(quotaCtx, sender)
 	if err != nil {
 		// API error - fail open (allow the message)
-		log.WithError(err).WithField("sender", sender).Warn("Failed to fetch quota, allowing message")
+		logger.Warn("Failed to fetch quota, allowing message",
+			zap.String("sender", sender), zap.Error(err))
 		policyRequestsTotal.WithLabelValues("check", "error").Inc()
 		policyRequestDuration.WithLabelValues("check", "error").Observe(time.Since(startTime).Seconds())
 		return "DUNNO"
@@ -198,7 +196,7 @@ func (p *PolicyServer) handleRequest(req *PolicyRequest) string {
 
 	// No limits configured (both 0 means unlimited)
 	if quota.PerHour == 0 && quota.PerDay == 0 {
-		log.WithField("sender", sender).Debug("No quota limits configured")
+		logger.Debug("No quota limits configured", zap.String("sender", sender))
 		policyRequestsTotal.WithLabelValues("check", "dunno").Inc()
 		policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())
 		return "DUNNO"
@@ -211,13 +209,12 @@ func (p *PolicyServer) handleRequest(req *PolicyRequest) string {
 	quotaChecksTotal.WithLabelValues("checked").Inc()
 
 	if !allowed {
-		log.WithFields(log.Fields{
-			"sender":     sender,
-			"hour_count": hourCount,
-			"day_count":  dayCount,
-			"hour_limit": quota.PerHour,
-			"day_limit":  quota.PerDay,
-		}).Info("Rate limit exceeded")
+		logger.Info("Rate limit exceeded",
+			zap.String("sender", sender),
+			zap.Int("hour_count", hourCount),
+			zap.Int("day_count", dayCount),
+			zap.Int("hour_limit", quota.PerHour),
+			zap.Int("day_limit", quota.PerDay))
 
 		policyRequestsTotal.WithLabelValues("check", "reject").Inc()
 		policyRequestDuration.WithLabelValues("check", "reject").Observe(time.Since(startTime).Seconds())
@@ -226,13 +223,12 @@ func (p *PolicyServer) handleRequest(req *PolicyRequest) string {
 		return "REJECT Rate limit exceeded, please try again later"
 	}
 
-	log.WithFields(log.Fields{
-		"sender":     sender,
-		"hour_count": hourCount,
-		"day_count":  dayCount,
-		"hour_limit": quota.PerHour,
-		"day_limit":  quota.PerDay,
-	}).Debug("Message allowed")
+	logger.Debug("Message allowed",
+		zap.String("sender", sender),
+		zap.Int("hour_count", hourCount),
+		zap.Int("day_count", dayCount),
+		zap.Int("hour_limit", quota.PerHour),
+		zap.Int("day_limit", quota.PerDay))
 
 	policyRequestsTotal.WithLabelValues("check", "dunno").Inc()
 	policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())

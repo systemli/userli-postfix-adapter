@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -28,7 +29,7 @@ type TCPServerConfig struct {
 
 // ConnectionHandler is the interface for handling TCP connections
 type ConnectionHandler interface {
-	HandleConnection(conn net.Conn)
+	HandleConnection(ctx context.Context, conn net.Conn)
 }
 
 // StartTCPServer starts a TCP server with connection pooling and graceful shutdown
@@ -44,7 +45,8 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 
 	listener, err := lc.Listen(ctx, "tcp", config.Addr)
 	if err != nil {
-		log.WithError(err).WithField("addr", config.Addr).Errorf("Failed to create %s listener", config.Name)
+		logger.Error(fmt.Sprintf("Failed to create %s listener", config.Name),
+			zap.String("addr", config.Addr), zap.Error(err))
 		return
 	}
 	defer listener.Close()
@@ -52,13 +54,16 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 	// Graceful shutdown handler
 	go func() {
 		<-ctx.Done()
-		log.WithField("addr", config.Addr).Infof("Shutting down %s server...", config.Name)
+		logger.Info(fmt.Sprintf("Shutting down %s server...", config.Name),
+			zap.String("addr", config.Addr))
 		listener.Close()
 		activeConnWg.Wait()
-		log.WithField("addr", config.Addr).Infof("All %s connections closed", config.Name)
+		logger.Info(fmt.Sprintf("All %s connections closed", config.Name),
+			zap.String("addr", config.Addr))
 	}()
 
-	log.WithField("addr", config.Addr).Infof("%s server started", config.Name)
+	logger.Info(fmt.Sprintf("%s server started", config.Name),
+		zap.String("addr", config.Addr))
 
 	for {
 		conn, err := listener.Accept()
@@ -66,7 +71,8 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			if ctx.Err() != nil {
 				return
 			}
-			log.WithError(err).WithField("addr", config.Addr).Error("Accept failed")
+			logger.Error("Accept failed",
+				zap.String("addr", config.Addr), zap.Error(err))
 			continue
 		}
 
@@ -76,9 +82,10 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			if config.OnConnectionAcquired != nil {
 				config.OnConnectionAcquired()
 			}
-			go handleTCPConnection(conn, handler, connSemaphore, &activeConnWg, config.OnConnectionReleased)
+			go handleTCPConnection(ctx, conn, handler, connSemaphore, &activeConnWg, config.OnConnectionReleased)
 		default:
-			log.WithField("addr", config.Addr).Warnf("Connection pool full, rejecting %s connection", config.Name)
+			logger.Warn(fmt.Sprintf("Connection pool full, rejecting %s connection", config.Name),
+				zap.String("addr", config.Addr))
 			if config.OnConnectionPoolFull != nil {
 				config.OnConnectionPoolFull()
 			}
@@ -88,7 +95,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 }
 
 // handleTCPConnection manages a single TCP connection with proper cleanup
-func handleTCPConnection(conn net.Conn, handler ConnectionHandler, semaphore chan struct{}, wg *sync.WaitGroup, onReleased func()) {
+func handleTCPConnection(ctx context.Context, conn net.Conn, handler ConnectionHandler, semaphore chan struct{}, wg *sync.WaitGroup, onReleased func()) {
 	defer func() {
 		conn.Close()
 		<-semaphore
@@ -107,5 +114,5 @@ func handleTCPConnection(conn net.Conn, handler ConnectionHandler, semaphore cha
 	// Set connection deadline
 	_ = conn.SetDeadline(time.Now().Add(ConnectionTimeout))
 
-	handler.HandleConnection(conn)
+	handler.HandleConnection(ctx, conn)
 }

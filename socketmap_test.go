@@ -208,7 +208,7 @@ func (s *ServerTestSuite) TestHandleSocketmapConnection() {
 	defer client.Close()
 
 	// Start the connection handler
-	go adapter.HandleConnection(server)
+	go adapter.HandleConnection(context.Background(), server)
 
 	// Send a request from the client side
 	request := "18:domain example.com,"
@@ -280,7 +280,7 @@ func (s *ServerTestSuite) TestHandleSocketmapConnection_MultipleRequests() {
 	defer client.Close()
 
 	// Start the connection handler
-	go adapter.HandleConnection(server)
+	go adapter.HandleConnection(context.Background(), server)
 
 	// Send first request
 	request1 := "18:domain example.com,"

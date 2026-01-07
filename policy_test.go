@@ -78,7 +78,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "RCPT",
@@ -86,7 +86,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 		SaslUsername:  "user@example.org",
 	}
 
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 
 	if response != "DUNNO" {
 		t.Errorf("Expected DUNNO for non-END-OF-MESSAGE state, got %s", response)
@@ -100,7 +100,7 @@ func TestPolicyServer_HandleRequest_NoSender(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -108,7 +108,7 @@ func TestPolicyServer_HandleRequest_NoSender(t *testing.T) {
 		SaslUsername:  "",
 	}
 
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 
 	if response != "DUNNO" {
 		t.Errorf("Expected DUNNO for empty sender, got %s", response)
@@ -122,7 +122,7 @@ func TestPolicyServer_HandleRequest_APIError(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -130,7 +130,7 @@ func TestPolicyServer_HandleRequest_APIError(t *testing.T) {
 		SaslUsername:  "user@example.org",
 	}
 
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 
 	// Should fail open (allow message) when API is unavailable
 	if response != "DUNNO" {
@@ -145,7 +145,7 @@ func TestPolicyServer_HandleRequest_NoLimits(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -153,7 +153,7 @@ func TestPolicyServer_HandleRequest_NoLimits(t *testing.T) {
 		SaslUsername:  "user@example.org",
 	}
 
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 
 	if response != "DUNNO" {
 		t.Errorf("Expected DUNNO for unlimited quota, got %s", response)
@@ -167,7 +167,7 @@ func TestPolicyServer_HandleRequest_AllowedMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -175,7 +175,7 @@ func TestPolicyServer_HandleRequest_AllowedMessage(t *testing.T) {
 		SaslUsername:  "user@example.org",
 	}
 
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 
 	if response != "DUNNO" {
 		t.Errorf("Expected DUNNO for allowed message, got %s", response)
@@ -189,7 +189,7 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -199,14 +199,14 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 
 	// First 2 messages should pass
 	for i := 0; i < 2; i++ {
-		response := server.handleRequest(req)
+		response := server.handleRequest(context.Background(), req)
 		if response != "DUNNO" {
 			t.Errorf("Message %d should be allowed, got %s", i+1, response)
 		}
 	}
 
 	// 3rd message should be rejected
-	response := server.handleRequest(req)
+	response := server.handleRequest(context.Background(), req)
 	if !strings.HasPrefix(response, "REJECT") {
 		t.Errorf("3rd message should be rejected, got %s", response)
 	}
@@ -222,7 +222,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	// First request uses sasl_username
 	req1 := &PolicyRequest{
@@ -230,7 +230,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 		Sender:        "different@example.org",
 		SaslUsername:  "user@example.org",
 	}
-	server.handleRequest(req1)
+	server.handleRequest(context.Background(), req1)
 
 	// Second request with same sasl_username should be limited
 	req2 := &PolicyRequest{
@@ -238,7 +238,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 		Sender:        "another@example.org",
 		SaslUsername:  "user@example.org",
 	}
-	response := server.handleRequest(req2)
+	response := server.handleRequest(context.Background(), req2)
 
 	if !strings.HasPrefix(response, "REJECT") {
 		t.Errorf("Should use sasl_username for rate limiting, got %s", response)
@@ -252,7 +252,7 @@ func TestPolicyServer_Integration(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(context.Background(), mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter)
 
 	// Start server on random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -271,7 +271,7 @@ func TestPolicyServer_Integration(t *testing.T) {
 		}
 		reader := bufio.NewReader(conn)
 		req, _ := server.readRequest(reader)
-		response := server.handleRequest(req)
+		response := server.handleRequest(context.Background(), req)
 		_ = server.writeResponse(conn, response)
 		conn.Close()
 	}()
