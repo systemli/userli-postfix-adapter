@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -19,13 +20,13 @@ type senderCounter struct {
 }
 
 // NewRateLimiter creates a new RateLimiter instance
-func NewRateLimiter() *RateLimiter {
+func NewRateLimiter(ctx context.Context) *RateLimiter {
 	rl := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
 
 	// Start background cleanup goroutine
-	go rl.cleanupLoop()
+	go rl.cleanupLoop(ctx)
 
 	return rl
 }
@@ -119,12 +120,17 @@ func (rl *RateLimiter) GetCounts(sender string) (hourCount, dayCount int) {
 }
 
 // cleanupLoop periodically removes old entries to prevent memory leaks
-func (rl *RateLimiter) cleanupLoop() {
+func (rl *RateLimiter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.cleanup()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.cleanup()
+		}
 	}
 }
 

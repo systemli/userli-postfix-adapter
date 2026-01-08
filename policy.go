@@ -40,6 +40,9 @@ func StartPolicyServer(ctx context.Context, wg *sync.WaitGroup, addr string, ser
 		OnConnectionReleased: func() {
 			policyActiveConnections.Dec()
 		},
+		OnConnectionPoolFull: func() {
+			policyConnectionPoolFullTotal.Inc()
+		},
 	}
 
 	StartTCPServer(ctx, wg, config, server)
@@ -50,6 +53,11 @@ func (p *PolicyServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			return
+		}
+
 		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 		request, err := p.readRequest(reader)

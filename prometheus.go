@@ -84,6 +84,11 @@ var (
 		Name: "userli_postfix_adapter_quota_checks_total",
 		Help: "Total number of quota checks performed",
 	}, []string{"result"})
+
+	policyConnectionPoolFullTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_policy_connection_pool_full_total",
+		Help: "Total number of policy connections rejected because the connection pool is full",
+	})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
@@ -116,6 +121,7 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		policyRequestDuration,
 		quotaExceededTotal,
 		quotaChecksTotal,
+		policyConnectionPoolFullTotal,
 		trackedSenders,
 	)
 

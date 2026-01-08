@@ -50,6 +50,9 @@ func StartLookupServer(ctx context.Context, wg *sync.WaitGroup, addr string, ser
 		OnConnectionReleased: func() {
 			activeConnections.Dec()
 		},
+		OnPoolUsageChanged: func(size int) {
+			connectionPoolUsage.Set(float64(size))
+		},
 	}
 
 	StartTCPServer(ctx, wg, config, server)

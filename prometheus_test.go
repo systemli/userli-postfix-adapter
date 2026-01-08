@@ -125,7 +125,7 @@ func (s *PrometheusTestSuite) TestStartMetricsServer() {
 		listenAddr := "127.0.0.1:0"
 
 		// Create a rate limiter for the test
-		rateLimiter := NewRateLimiter()
+		rateLimiter := NewRateLimiter(context.Background())
 
 		// Start server in goroutine
 		serverStarted := make(chan struct{})

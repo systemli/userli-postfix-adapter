@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -25,6 +26,14 @@ type TCPServerConfig struct {
 	OnConnectionAcquired func()
 	OnConnectionReleased func()
 	OnConnectionPoolFull func()
+	OnPoolUsageChanged   func(int)
+}
+
+// connectionCallbacks holds callbacks for connection lifecycle events
+type connectionCallbacks struct {
+	poolUsage          *atomic.Int64
+	onReleased         func()
+	onPoolUsageChanged func(int)
 }
 
 // ConnectionHandler is the interface for handling TCP connections
@@ -38,6 +47,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 
 	connSemaphore := make(chan struct{}, MaxConcurrentConnections)
 	var activeConnWg sync.WaitGroup
+	var poolUsage atomic.Int64
 
 	lc := net.ListenConfig{
 		KeepAlive: KeepAliveTimeout,
@@ -82,7 +92,12 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			if config.OnConnectionAcquired != nil {
 				config.OnConnectionAcquired()
 			}
-			go handleTCPConnection(ctx, conn, handler, connSemaphore, &activeConnWg, config.OnConnectionReleased)
+			cb := &connectionCallbacks{
+				poolUsage:          &poolUsage,
+				onReleased:         config.OnConnectionReleased,
+				onPoolUsageChanged: config.OnPoolUsageChanged,
+			}
+			go handleTCPConnection(ctx, conn, handler, connSemaphore, &activeConnWg, cb)
 		default:
 			logger.Warn(fmt.Sprintf("Connection pool full, rejecting %s connection", config.Name),
 				zap.String("addr", config.Addr))
@@ -95,12 +110,19 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 }
 
 // handleTCPConnection manages a single TCP connection with proper cleanup
-func handleTCPConnection(ctx context.Context, conn net.Conn, handler ConnectionHandler, semaphore chan struct{}, wg *sync.WaitGroup, onReleased func()) {
+func handleTCPConnection(ctx context.Context, conn net.Conn, handler ConnectionHandler, semaphore chan struct{}, wg *sync.WaitGroup, cb *connectionCallbacks) {
+	// Increment pool usage first, then defer the decrement to ensure symmetry
+	if cb.onPoolUsageChanged != nil {
+		cb.onPoolUsageChanged(int(cb.poolUsage.Add(1)))
+	}
 	defer func() {
 		conn.Close()
 		<-semaphore
-		if onReleased != nil {
-			onReleased()
+		if cb.onPoolUsageChanged != nil {
+			cb.onPoolUsageChanged(int(cb.poolUsage.Add(-1)))
+		}
+		if cb.onReleased != nil {
+			cb.onReleased()
 		}
 		wg.Done()
 	}()

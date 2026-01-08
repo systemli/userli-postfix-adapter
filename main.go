@@ -48,7 +48,7 @@ func main() {
 	defer stop()
 
 	// Create rate limiter for policy server
-	rateLimiter := NewRateLimiter()
+	rateLimiter := NewRateLimiter(ctx)
 	policyServer := NewPolicyServer(userli, rateLimiter)
 
 	var wg sync.WaitGroup
