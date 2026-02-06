@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/markdingo/netstring"
@@ -27,29 +28,49 @@ func (r *SocketmapResponse) String() string {
 	return fmt.Sprintf("%s %s", r.Status, r.Data)
 }
 
-// SocketmapAdapter handles socketmap protocol requests
-type SocketmapAdapter struct {
+// LookupServer handles Postfix socketmap protocol requests for lookups.
+// It implements the ConnectionHandler interface.
+type LookupServer struct {
 	client UserliService
 }
 
-// NewSocketmapAdapter creates a new SocketmapAdapter with the given UserliService
-func NewSocketmapAdapter(client UserliService) *SocketmapAdapter {
-	return &SocketmapAdapter{client: client}
+// NewLookupServer creates a new LookupServer with the given UserliService
+func NewLookupServer(client UserliService) *LookupServer {
+	return &LookupServer{client: client}
 }
 
-// HandleConnection processes a single socketmap connection
-// Supports persistent connections with multiple requests
-func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			logger.Error("Error closing connection", zap.Error(err))
-		}
-	}()
+// StartLookupServer starts the lookup server on the given address
+func StartLookupServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *LookupServer) {
+	config := TCPServerConfig{
+		Name: "socketmap",
+		Addr: addr,
+		OnConnectionAcquired: func() {
+			activeConnections.Inc()
+		},
+		OnConnectionReleased: func() {
+			activeConnections.Dec()
+		},
+		OnPoolUsageChanged: func(size int) {
+			connectionPoolUsage.Set(float64(size))
+		},
+	}
 
+	StartTCPServer(ctx, wg, config, server)
+}
+
+// HandleConnection implements ConnectionHandler interface for LookupServer.
+// It processes socketmap protocol requests, supporting persistent connections with multiple requests.
+// Note: The caller (tcpserver.go) is responsible for closing the connection.
+func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	decoder := netstring.NewDecoder(conn)
 	encoder := netstring.NewEncoder(conn)
 
 	for {
+		// Check if context is cancelled
+		if ctx.Err() != nil {
+			return
+		}
+
 		// Set read deadline for each request
 		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
@@ -80,34 +101,38 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 		mapName := parts[0]
 		key := parts[1]
 
-		logger.Debug("Processing socketmap request", zap.String("map", mapName), zap.String("key", key))
+		logger.Debug("Processing socketmap request",
+			zap.String("map", mapName),
+			zap.String("key", key))
 
-		// Create context with timeout for this request
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-		// Route to appropriate handler based on map name
-		var response *SocketmapResponse
-		switch mapName {
-		case "alias":
-			response = s.handleAlias(ctx, key)
-		case "domain":
-			response = s.handleDomain(ctx, key)
-		case "mailbox":
-			response = s.handleMailbox(ctx, key)
-		case "senders":
-			response = s.handleSenders(ctx, key)
-		default:
-			logger.Error("Unknown map name", zap.String("map", mapName))
-			response = &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
-		}
-
-		cancel() // Always cancel context when done
+		response := s.processRequest(ctx, mapName, key)
 		s.writeResponse(encoder, conn, response, now, mapName)
 	}
 }
 
+// processRequest routes a socketmap request to the appropriate handler with a timeout context.
+// Using a separate method ensures defer cancel() runs after each request, preventing context leaks.
+func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) *SocketmapResponse {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	switch mapName {
+	case "alias":
+		return s.handleAlias(reqCtx, key)
+	case "domain":
+		return s.handleDomain(reqCtx, key)
+	case "mailbox":
+		return s.handleMailbox(reqCtx, key)
+	case "senders":
+		return s.handleSenders(reqCtx, key)
+	default:
+		logger.Error("Unknown map name", zap.String("map", mapName))
+		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
+	}
+}
+
 // handleAlias processes alias lookup requests
-func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleAlias(ctx context.Context, key string) *SocketmapResponse {
 	aliases, err := s.client.GetAliases(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching aliases", zap.String("key", key), zap.Error(err))
@@ -122,7 +147,7 @@ func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *Socketm
 }
 
 // handleDomain processes domain lookup requests
-func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleDomain(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetDomain(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching domain", zap.String("key", key), zap.Error(err))
@@ -137,7 +162,7 @@ func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *Socket
 }
 
 // handleMailbox processes mailbox lookup requests
-func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetMailbox(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching mailbox", zap.String("key", key), zap.Error(err))
@@ -152,7 +177,7 @@ func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *Socke
 }
 
 // handleSenders processes senders lookup requests
-func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *SocketmapResponse {
+func (s *LookupServer) handleSenders(ctx context.Context, key string) *SocketmapResponse {
 	senders, err := s.client.GetSenders(ctx, key)
 	if err != nil {
 		logger.Error("Error fetching senders", zap.String("key", key), zap.Error(err))
@@ -167,7 +192,7 @@ func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *Socke
 }
 
 // writeResponse sends a socketmap response back to the client
-func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
+func (s *LookupServer) writeResponse(encoder *netstring.Encoder, conn net.Conn, response *SocketmapResponse, startTime time.Time, mapName string) {
 	var status string
 	switch response.Status {
 	case "OK":
