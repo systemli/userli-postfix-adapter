@@ -224,7 +224,7 @@ func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 		return nil, err
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/quota/%s", u.baseURL, sanitizedEmail))
+	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/smtp_quota/%s", u.baseURL, sanitizedEmail))
 	if err != nil {
 		return nil, err
 	}
