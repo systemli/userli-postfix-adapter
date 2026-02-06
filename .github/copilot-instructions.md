@@ -2,141 +2,103 @@
 
 ## Project Overview
 
-This is a Postfix socketmap adapter for the [Userli](https://github.com/systemli/userli) email user management system. It provides TCP-based lookup services for Postfix to query virtual aliases, domains, mailboxes, and sender login maps from Userli's REST API.
+Postfix adapter for [Userli](https://github.com/systemli/userli) email management. Provides two TCP servers:
+
+- **Lookup Server** (`:10001`): Lookups for aliases, domains, mailboxes, senders
+- **Policy Server** (`:10003`): Rate limiting via Postfix SMTP Access Policy Delegation
 
 ## Architecture
 
-### Core Components
-
-- **Socketmap Server** (`server.go`): TCP server implementing Postfix's socketmap protocol on port 10001
-- **Userli Client** (`userli.go`): REST API client for querying Userli backend
-- **Metrics Server** (`prometheus.go`): Prometheus metrics endpoint on port 10002
-- **Adapter Logic** (`adapter.go`): Request routing and response formatting for four map types (alias, domain, mailbox, senders)
-
-### Request Flow
-
-1. Postfix sends socketmap query via TCP (format: `<netstring>MAP_NAME <SP> KEY`)
-2. Socketmap server parses request and routes to appropriate handler in adapter
-3. Adapter queries Userli REST API (`/api/postfix/{map_type}?query={key}`)
-4. Response converted back to socketmap netstring format
-5. Metrics updated for observability
-
-## Development Workflow
-
-### Local Setup
-
-```bash
-# Copy environment template
-cp .env.dist .env
-
-# Edit .env and set USERLI_TOKEN (required)
-# Token can be created in Userli: Settings -> Api Tokens
-
-# Start full stack (adapter + postfix + userli + mariadb + mailcatcher)
-docker-compose up
-
-# Adapter runs on :10001 (socketmap) and :10002 (metrics)
+```
+┌─────────┐     ┌──────────────────┐     ┌────────────┐
+│ Postfix │────▶│ tcpserver.go     │────▶│ Userli API │
+└─────────┘     │ (shared infra)   │     └────────────┘
+                ├──────────────────┤
+                │ lookup.go        │  ← ConnectionHandler interface
+                │ policy.go        │  ← ConnectionHandler interface
+                └──────────────────┘
 ```
 
-### Testing Postfix Integration
+### Key Pattern: ConnectionHandler Interface
+
+Both servers implement `ConnectionHandler` from `tcpserver.go`:
+
+```go
+type ConnectionHandler interface {
+    HandleConnection(ctx context.Context, conn net.Conn)
+}
+```
+
+`StartTCPServer()` provides shared infrastructure: connection pooling (semaphore), graceful shutdown, TCP keep-alive, metrics hooks.
+
+### File Structure
+
+| File            | Purpose                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| `tcpserver.go`  | Shared TCP server with connection pooling, graceful shutdown         |
+| `lookup.go`     | Socketmap protocol + `LookupServer` (implements `ConnectionHandler`) |
+| `policy.go`     | Policy protocol + `PolicyServer` + rate limit logic                  |
+| `ratelimit.go`  | Sliding window rate limiter (in-memory, per-sender)                  |
+| `userli.go`     | HTTP client for Userli API with Bearer auth                          |
+| `prometheus.go` | Metrics server + all metric definitions                              |
+| `config.go`     | Environment variable configuration                                   |
+
+## Development
 
 ```bash
-# Test socketmap queries directly
-echo -e "10:alias test" | nc localhost 10001
+cp .env.dist .env  # Set USERLI_TOKEN
+docker-compose up  # Full stack: adapter + postfix + userli + mariadb + mailcatcher
 
-# Test via Postfix container
-docker-compose exec postfix postmap -q "user@example.org" socketmap:inet:adapter:10001:alias
+# Test lookup (via socketmap protocol)
 docker-compose exec postfix postmap -q "example.org" socketmap:inet:adapter:10001:domain
-docker-compose exec postfix postmap -q "user@example.org" socketmap:inet:adapter:10001:mailbox
-docker-compose exec postfix postmap -q "user@example.org" socketmap:inet:adapter:10001:senders
 
-# View caught test emails
-open http://localhost:1080  # Mailcatcher web UI
-```
-
-### Building & Testing
-
-```bash
-# Run tests with coverage
-go test ./...
-
-# Build binary
-go build -o userli-postfix-adapter
-
-# Build Docker image
-docker build -t systemli/userli-postfix-adapter .
+# Test policy (sends raw policy request)
+echo -e "request=smtpd_access_policy\nprotocol_state=END-OF-MESSAGE\nsender=test@example.org\n\n" | nc localhost 10003
 ```
 
 ## Code Conventions
 
-### Configuration Pattern
+### Context Propagation
 
-- Use environment variables exclusively (no config files)
-- **Required**: `USERLI_TOKEN` - application will fatal if missing
-- Defaults defined in `config.go:NewConfig()`:
-  - `USERLI_BASE_URL`: `http://localhost:8000`
-  - `SOCKETMAP_LISTEN_ADDR`: `:10001`
-  - `METRICS_LISTEN_ADDR`: `:10002`
-  - `LOG_LEVEL`: `info`
-  - `LOG_FORMAT`: `text` (or `json`)
+- Never store `context.Context` in structs - pass through function parameters
+- Use parent context for timeouts: `ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)`
 
 ### Error Handling
 
-- Use `logrus` for structured logging: `log.WithField("key", value).Error()`
-- Socketmap protocol requires specific error responses:
-  - `"TEMP "` - temporary failure (HTTP errors, network issues)
-  - `"PERM "` - permanent failure (404 not found)
-  - `"NOTFOUND "` - valid query but no result
-  - `"OK <value>"` - successful lookup
-- Fatal errors only for startup issues (missing token, port bind failures)
-- Network/API errors are logged but return TEMP to Postfix for retry
+- **Socketmap responses**: `OK <data>`, `NOTFOUND`, `TEMP <msg>`, `PERM <msg>`
+- **Policy responses**: `action=DUNNO\n\n` (allow) or `action=REJECT <msg>\n\n`
+- **Fail-open**: API errors return DUNNO/allow, never block mail on failures
 
-### Adapter Response Pattern
+### Metrics (prometheus.go)
 
-The adapter in `adapter.go` follows this flow:
+- No PII in labels - aggregate counters only, no email addresses
+- Metrics defined as package-level vars, registered in `StartMetricsServer()`
 
-```go
-// 1. Parse socketmap request (map name and key)
-// 2. Query Userli API: GET /api/postfix/{mapName}?query={key}
-// 3. Parse JSON response structure: {"exists": bool, "result": string}
-// 4. Return formatted response: "OK result" or "NOTFOUND "
+### Testing
+
+- Mocks generated via mockery (`.mockery.yml`) - regenerate with `mockery`
+- Use `context.Background()` in tests for handlers
+
+## Protocols
+
+### Socketmap (RFC-like netstring)
+
+```
+Request:  <len>:<mapname> <key>,    e.g., "18:domain example.org,"
+Response: <len>:<status> <data>,    e.g., "4:OK 1,"
 ```
 
-### Socketmap Protocol Implementation
+### Policy Delegation (Postfix SMTPD)
 
-- Request format: `<length>:<data>,` (netstring format)
-- Data format: `<mapName> <key>`
-- Responses must end with space and newline per Postfix spec
-- See `server.go:handleConnection()` for full protocol details
+```
+Request:  name=value\n pairs, empty line terminates
+Response: action=ACTION\n\n
+```
 
-### Testing with Mocks
-
-- Mock interfaces generated with `mockery` (see `mock_UserliService.go`)
-- Test files follow `*_test.go` naming convention
-- Use table-driven tests for multiple scenarios
-
-## Key Files
-
-- `main.go` - Entry point, initializes config and starts servers
-- `server.go` - TCP server and socketmap protocol implementation
-- `adapter.go` - Request routing and Userli API interaction
-- `userli.go` - HTTP client with Bearer token authentication
-- `config.go` - Environment-based configuration
-- `prometheus.go` - Metrics instrumentation
-- `docker-compose.yml` - Full test environment with Postfix, Userli, MariaDB, and Mailcatcher
-
-## External Dependencies
-
-- **Userli API**: REST endpoints at `/api/postfix/{alias,domain,mailbox,senders}?query={key}`
-  - Returns JSON: `{"exists": true/false, "result": "value"}`
-  - Requires Bearer token authentication
-- **Postfix Configuration**: Uses `socketmap:inet:adapter:10001:{mapName}` in virtual\_\*\_maps directives
-- **Prometheus**: Scrapes metrics from `:10002/metrics`
+Only process at `protocol_state=END-OF-MESSAGE` for accurate counting.
 
 ## Common Pitfalls
 
-- Forgetting to set `USERLI_TOKEN` in `.env` causes immediate startup failure
-- Map names in Postfix config must exactly match: `alias`, `domain`, `mailbox`, `senders`
-- Netstring format is strict: must include length prefix and comma suffix
-- Empty API responses (exists=false) should return "NOTFOUND ", not an error
-- All socketmap responses must end with space + newline for Postfix compatibility
+- `USERLI_TOKEN` is required - app exits immediately if missing
+- Rate limiter cleanup runs every 5 minutes in background goroutine
+- Map names must match exactly: `alias`, `domain`, `mailbox`, `senders`
