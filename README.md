@@ -13,6 +13,7 @@ The adapter is configured via environment variables:
 - `USERLI_BASE_URL`: The base URL of the userli API.
 - `POSTFIX_RECIPIENT_DELIMITER`: The recipient delimiter used in Postfix (e.g., `+`). Default: empty.
 - `SOCKETMAP_LISTEN_ADDR`: The address to listen on for socketmap requests. Default: `:10001`.
+- `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
@@ -23,6 +24,28 @@ virtual_mailbox_domains = socketmap:inet:localhost:10001:domain
 virtual_mailbox_maps = socketmap:inet:localhost:10001:mailbox
 smtpd_sender_login_maps = socketmap:inet:localhost:10001:senders
 ```
+
+### Rate Limiting (Policy Server)
+
+The adapter also provides a Postfix SMTP Access Policy Delegation server for rate limiting outgoing mail.
+It queries the Userli API for per-user quotas and enforces sending limits.
+
+Configure in Postfix `main.cf`:
+
+```text
+smtpd_end_of_data_restrictions = check_policy_service inet:localhost:10003
+```
+
+The Userli API endpoint `/api/postfix/quota/{email}` returns:
+
+```json
+{
+    "per_hour": 100,
+    "per_day": 1000
+}
+```
+
+Where `0` means unlimited. If the API is unreachable, messages are allowed (fail-open).
 
 ## Docker
 
@@ -140,6 +163,15 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 **Health:**
 
 - `userli_postfix_adapter_health_check_status` - Health check status (1=healthy, 0=unhealthy)
+
+**Policy/Rate Limiting Metrics:**
+
+- `userli_postfix_adapter_policy_active_connections` - Active policy connections gauge
+- `userli_postfix_adapter_policy_requests_total` - Total policy request counter
+- `userli_postfix_adapter_policy_request_duration_seconds` - Policy request duration histogram
+- `userli_postfix_adapter_quota_exceeded_total` - Total messages rejected due to quota
+- `userli_postfix_adapter_quota_checks_total` - Total quota checks performed
+- `userli_postfix_adapter_tracked_senders` - Number of senders tracked by rate limiter
 
 All metrics include relevant labels (handler, status, endpoint, etc.).
 
