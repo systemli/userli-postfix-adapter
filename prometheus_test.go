@@ -25,7 +25,7 @@ func (s *PrometheusTestSuite) TestHealthHandler() {
 
 		s.Equal(http.StatusOK, w.Code)
 		s.Equal("application/json", w.Header().Get("Content-Type"))
-		s.Equal("{\"status\":\"ok\"}\n", w.Body.String())
+		s.Equal(`{"status":"ok"}`+"\n", w.Body.String())
 	})
 }
 
@@ -42,7 +42,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 
 		s.Equal(http.StatusOK, w.Code)
 		s.Equal("application/json", w.Header().Get("Content-Type"))
-		s.Equal("{\"status\":\"ready\"}\n", w.Body.String())
+		s.Equal(`{"status":"ready"}`+"\n", w.Body.String())
 
 		mockClient.AssertExpectations(s.T())
 	})
@@ -59,7 +59,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 
 		s.Equal(http.StatusServiceUnavailable, w.Code)
 		s.Equal("application/json", w.Header().Get("Content-Type"))
-		s.Equal("{\"error\":\"connection refused\",\"status\":\"unavailable\"}\n", w.Body.String())
+		s.Equal(`{"error":"connection refused","status":"unavailable"}`+"\n", w.Body.String())
 
 		mockClient.AssertExpectations(s.T())
 	})
@@ -80,7 +80,7 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 
 		s.Equal(http.StatusServiceUnavailable, w.Code)
 		s.Equal("application/json", w.Header().Get("Content-Type"))
-		s.Equal("{\"error\":\"timeout\",\"status\":\"unavailable\"}\n", w.Body.String())
+		s.Equal(`{"error":"timeout","status":"unavailable"}`+"\n", w.Body.String())
 	})
 }
 
@@ -124,11 +124,14 @@ func (s *PrometheusTestSuite) TestStartMetricsServer() {
 		// Use a random available port
 		listenAddr := "127.0.0.1:0"
 
+		// Create a rate limiter for the test
+		rateLimiter := NewRateLimiter(context.Background())
+
 		// Start server in goroutine
 		serverStarted := make(chan struct{})
 		go func() {
 			close(serverStarted)
-			StartMetricsServer(ctx, listenAddr, mockClient)
+			StartMetricsServer(ctx, listenAddr, mockClient, rateLimiter)
 		}()
 
 		// Wait for server to start

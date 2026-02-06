@@ -47,16 +47,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	rateLimiter := NewRateLimiter(ctx)
+	policyServer := NewPolicyServer(userli, rateLimiter)
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		StartMetricsServer(ctx, config.MetricsListenAddr, userli)
+		StartMetricsServer(ctx, config.MetricsListenAddr, userli, rateLimiter)
 	}()
 
 	wg.Add(1)
 	go StartLookupServer(ctx, &wg, config.SocketmapListenAddr, lookupServer)
+
+	wg.Add(1)
+	go StartPolicyServer(ctx, &wg, config.PolicyListenAddr, policyServer)
 
 	wg.Wait()
 	logger.Info("All servers stopped")
