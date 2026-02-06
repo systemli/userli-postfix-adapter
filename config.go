@@ -1,9 +1,8 @@
 package main
 
 import (
+	"fmt"
 	"os"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // Config is the configuration for the application.
@@ -25,29 +24,7 @@ type Config struct {
 }
 
 // NewConfig creates a new Config with default values.
-func NewConfig() *Config {
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info"
-	}
-
-	logFormat := os.Getenv("LOG_FORMAT")
-	if logFormat == "" {
-		logFormat = "text"
-	}
-
-	level, err := log.ParseLevel(logLevel)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to parse log level")
-	}
-	log.SetLevel(level)
-
-	if logFormat == "json" {
-		log.SetFormatter(&log.JSONFormatter{})
-	} else {
-		log.SetFormatter(&log.TextFormatter{})
-	}
-
+func NewConfig() (*Config, error) {
 	userliBaseURL := os.Getenv("USERLI_BASE_URL")
 	if userliBaseURL == "" {
 		userliBaseURL = "http://localhost:8000"
@@ -55,7 +32,7 @@ func NewConfig() *Config {
 
 	userliToken := os.Getenv("USERLI_TOKEN")
 	if userliToken == "" {
-		log.Fatal("USERLI_TOKEN is required")
+		return nil, fmt.Errorf("USERLI_TOKEN is required")
 	}
 
 	postfixRecipientDelimiter := os.Getenv("POSTFIX_RECIPIENT_DELIMITER")
@@ -76,5 +53,5 @@ func NewConfig() *Config {
 		PostfixRecipientDelimiter: postfixRecipientDelimiter,
 		SocketmapListenAddr:       socketmapListenAddr,
 		MetricsListenAddr:         metricsListenAddr,
-	}
+	}, nil
 }

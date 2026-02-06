@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -32,7 +32,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 
 	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		log.WithError(err).WithField("addr", addr).Error("Failed to create socketmap listener")
+		logger.Error("Failed to create socketmap listener", zap.String("addr", addr), zap.Error(err))
 		return
 	}
 	defer listener.Close()
@@ -40,17 +40,17 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 	// Graceful shutdown handler
 	go func() {
 		<-ctx.Done()
-		log.WithField("addr", addr).Info("Shutting down socketmap server...")
+		logger.Info("Shutting down socketmap server...", zap.String("addr", addr))
 		listener.Close()
 
 		// Wait for active connections to finish
 		activeConnWg.Wait()
 		activeConnections.Set(0)
 		connectionPoolUsage.Set(0)
-		log.WithField("addr", addr).Info("All socketmap connections closed")
+		logger.Info("All socketmap connections closed", zap.String("addr", addr))
 	}()
 
-	log.WithField("addr", addr).Info("Socketmap server started")
+	logger.Info("Socketmap server started", zap.String("addr", addr))
 
 	for {
 		conn, err := listener.Accept()
@@ -58,7 +58,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 			if ctx.Err() != nil {
 				return // Context cancelled, exit gracefully
 			}
-			log.WithError(err).WithField("addr", addr).Error("Accept failed")
+			logger.Error("Accept failed", zap.String("addr", addr), zap.Error(err))
 			continue
 		}
 
@@ -72,7 +72,7 @@ func StartSocketmapServer(ctx context.Context, wg *sync.WaitGroup, addr string, 
 			go handleSocketmapConnection(conn, adapter, connSemaphore, &activeConnWg)
 		default:
 			// Connection pool full, reject connection
-			log.WithField("addr", addr).Warn("Connection pool full, rejecting socketmap connection")
+			logger.Warn("Connection pool full, rejecting socketmap connection", zap.String("addr", addr))
 			conn.Close()
 		}
 	}

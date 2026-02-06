@@ -10,7 +10,7 @@ import (
 
 	"github.com/markdingo/netstring"
 	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // SocketmapResponse represents a socketmap protocol response
@@ -42,7 +42,7 @@ func NewSocketmapAdapter(client UserliService) *SocketmapAdapter {
 func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			log.WithError(err).Error("Error closing connection")
+			logger.Error("Error closing connection", zap.Error(err))
 		}
 	}()
 
@@ -58,9 +58,9 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 		if err != nil {
 			// Check if this is a normal connection closure (EOF) or an actual error
 			if err == io.EOF {
-				log.Debug("Client closed connection")
+				logger.Debug("Client closed connection")
 			} else {
-				log.WithError(err).Debug("Failed to decode request")
+				logger.Debug("Failed to decode request", zap.Error(err))
 			}
 			return
 		}
@@ -71,7 +71,7 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 		// Parse the request: "name key"
 		parts := strings.SplitN(strings.TrimSpace(request), " ", 2)
 		if len(parts) != 2 {
-			log.WithField("request", request).Error("Invalid request format")
+			logger.Error("Invalid request format", zap.String("request", request))
 			response := &SocketmapResponse{Status: "PERM", Data: "Invalid request format"}
 			s.writeResponse(encoder, conn, response, now, "invalid")
 			continue
@@ -80,10 +80,7 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 		mapName := parts[0]
 		key := parts[1]
 
-		log.WithFields(log.Fields{
-			"map": mapName,
-			"key": key,
-		}).Debug("Processing socketmap request")
+		logger.Debug("Processing socketmap request", zap.String("map", mapName), zap.String("key", key))
 
 		// Create context with timeout for this request
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -100,7 +97,7 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 		case "senders":
 			response = s.handleSenders(ctx, key)
 		default:
-			log.WithField("map", mapName).Error("Unknown map name")
+			logger.Error("Unknown map name", zap.String("map", mapName))
 			response = &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 		}
 
@@ -113,7 +110,7 @@ func (s *SocketmapAdapter) HandleConnection(conn net.Conn) {
 func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *SocketmapResponse {
 	aliases, err := s.client.GetAliases(ctx, key)
 	if err != nil {
-		log.WithError(err).WithField("key", key).Error("Error fetching aliases")
+		logger.Error("Error fetching aliases", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"}
 	}
 
@@ -128,7 +125,7 @@ func (s *SocketmapAdapter) handleAlias(ctx context.Context, key string) *Socketm
 func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetDomain(ctx, key)
 	if err != nil {
-		log.WithError(err).WithField("key", key).Error("Error fetching domain")
+		logger.Error("Error fetching domain", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"}
 	}
 
@@ -143,7 +140,7 @@ func (s *SocketmapAdapter) handleDomain(ctx context.Context, key string) *Socket
 func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetMailbox(ctx, key)
 	if err != nil {
-		log.WithError(err).WithField("key", key).Error("Error fetching mailbox")
+		logger.Error("Error fetching mailbox", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"}
 	}
 
@@ -158,7 +155,7 @@ func (s *SocketmapAdapter) handleMailbox(ctx context.Context, key string) *Socke
 func (s *SocketmapAdapter) handleSenders(ctx context.Context, key string) *SocketmapResponse {
 	senders, err := s.client.GetSenders(ctx, key)
 	if err != nil {
-		log.WithError(err).WithField("key", key).Error("Error fetching senders")
+		logger.Error("Error fetching senders", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"}
 	}
 
@@ -181,11 +178,10 @@ func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Co
 		status = "error"
 	}
 
-	log.WithFields(log.Fields{
-		"response": response.String(),
-		"map":      mapName,
-		"status":   status,
-	}).Debug("Writing socketmap response")
+	logger.Debug("Writing socketmap response",
+		zap.String("response", response.String()),
+		zap.String("map", mapName),
+		zap.String("status", status))
 
 	// Set write deadline
 	_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
@@ -193,11 +189,11 @@ func (s *SocketmapAdapter) writeResponse(encoder *netstring.Encoder, conn net.Co
 	// Encode and send the response
 	err := encoder.EncodeString(netstring.NoKey, response.String())
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"response": response.String(),
-			"map":      mapName,
-			"status":   status,
-		}).Error("Error writing response")
+		logger.Error("Error writing response",
+			zap.String("response", response.String()),
+			zap.String("map", mapName),
+			zap.String("status", status),
+			zap.Error(err))
 	}
 
 	// Record metrics

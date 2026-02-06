@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // validLocalPartRegex validates that the local part only contains allowed characters: a-z, 0-9, -, _, .
@@ -130,7 +130,7 @@ func NewUserli(token, baseURL string, opts ...Option) *Userli {
 func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Info("unable to process the alias")
+		logger.Info("unable to process the alias", zap.String("email", email), zap.Error(err))
 		return []string{}, nil
 	}
 
@@ -152,7 +152,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
 	if err != nil {
-		log.WithError(err).WithField("domain", domain).Info("unable to process the domain")
+		logger.Info("unable to process the domain", zap.String("domain", domain), zap.Error(err))
 		return false, err
 	}
 	defer resp.Body.Close()
@@ -169,7 +169,7 @@ func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Info("unable to process the mailbox")
+		logger.Info("unable to process the mailbox", zap.String("email", email), zap.Error(err))
 		return false, nil
 	}
 
@@ -191,7 +191,7 @@ func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Info("unable to process the senders")
+		logger.Info("unable to process the senders", zap.String("email", email), zap.Error(err))
 		return []string{}, nil
 	}
 

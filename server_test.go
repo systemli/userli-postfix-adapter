@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"io"
 	"net"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type ServerTestSuite struct {
@@ -35,12 +33,10 @@ func (s *ServerTestSuite) readNetstringResponse(conn net.Conn) (string, error) {
 
 func (s *ServerTestSuite) SetupTest() {
 	// Disable logging output during tests
-	log.SetOutput(io.Discard)
+	logger = zap.NewNop()
 }
 
 func (s *ServerTestSuite) TearDownTest() {
-	// Restore logging output
-	log.SetOutput(os.Stderr)
 }
 
 // TestStartSocketmapServer_BasicFunctionality tests basic server startup and shutdown
