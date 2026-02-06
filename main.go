@@ -42,7 +42,7 @@ func main() {
 	}
 
 	userli := NewUserli(config.UserliToken, config.UserliBaseURL, WithDelimiter(config.PostfixRecipientDelimiter))
-	socketmapAdapter := NewSocketmapAdapter(userli)
+	lookupServer := NewLookupServer(userli)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -56,7 +56,7 @@ func main() {
 	}()
 
 	wg.Add(1)
-	go StartSocketmapServer(ctx, &wg, config.SocketmapListenAddr, socketmapAdapter)
+	go StartLookupServer(ctx, &wg, config.SocketmapListenAddr, lookupServer)
 
 	wg.Wait()
 	logger.Info("All servers stopped")
