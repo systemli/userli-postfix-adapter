@@ -19,6 +19,9 @@ type Config struct {
 	// SocketmapListenAddr is the address to listen for socketmap requests.
 	SocketmapListenAddr string
 
+	// PolicyListenAddr is the address to listen for policy requests.
+	PolicyListenAddr string
+
 	// MetricsListenAddr is the address to listen for metrics requests.
 	MetricsListenAddr string
 }
@@ -47,11 +50,17 @@ func NewConfig() (*Config, error) {
 		metricsListenAddr = ":10002"
 	}
 
+	policyListenAddr := os.Getenv("POLICY_LISTEN_ADDR")
+	if policyListenAddr == "" {
+		policyListenAddr = ":10003"
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
 		PostfixRecipientDelimiter: postfixRecipientDelimiter,
 		SocketmapListenAddr:       socketmapListenAddr,
+		PolicyListenAddr:          policyListenAddr,
 		MetricsListenAddr:         metricsListenAddr,
 	}, nil
 }
