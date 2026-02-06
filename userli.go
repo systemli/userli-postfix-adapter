@@ -220,7 +220,7 @@ func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error)
 func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		log.WithError(err).WithField("email", email).Info("unable to process the quota")
+		logger.Info("unable to process the quota", zap.String("email", email), zap.Error(err))
 		return nil, err
 	}
 

@@ -60,13 +60,8 @@ func StartLookupServer(ctx context.Context, wg *sync.WaitGroup, addr string, ser
 
 // HandleConnection implements ConnectionHandler interface for LookupServer.
 // It processes socketmap protocol requests, supporting persistent connections with multiple requests.
+// Note: The caller (tcpserver.go) is responsible for closing the connection.
 func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
-	defer func() {
-		if err := conn.Close(); err != nil {
-			logger.Error("Error closing connection", zap.Error(err))
-		}
-	}()
-
 	decoder := netstring.NewDecoder(conn)
 	encoder := netstring.NewEncoder(conn)
 
@@ -110,27 +105,29 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 			zap.String("map", mapName),
 			zap.String("key", key))
 
-		// Create context with timeout for this request, using parent context
-		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-
-		// Route to appropriate handler based on map name
-		var response *SocketmapResponse
-		switch mapName {
-		case "alias":
-			response = s.handleAlias(reqCtx, key)
-		case "domain":
-			response = s.handleDomain(reqCtx, key)
-		case "mailbox":
-			response = s.handleMailbox(reqCtx, key)
-		case "senders":
-			response = s.handleSenders(reqCtx, key)
-		default:
-			logger.Error("Unknown map name", zap.String("map", mapName))
-			response = &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
-		}
-
-		cancel() // Always cancel context when done
+		response := s.processRequest(ctx, mapName, key)
 		s.writeResponse(encoder, conn, response, now, mapName)
+	}
+}
+
+// processRequest routes a socketmap request to the appropriate handler with a timeout context.
+// Using a separate method ensures defer cancel() runs after each request, preventing context leaks.
+func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) *SocketmapResponse {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	switch mapName {
+	case "alias":
+		return s.handleAlias(reqCtx, key)
+	case "domain":
+		return s.handleDomain(reqCtx, key)
+	case "mailbox":
+		return s.handleMailbox(reqCtx, key)
+	case "senders":
+		return s.handleSenders(reqCtx, key)
+	default:
+		logger.Error("Unknown map name", zap.String("map", mapName))
+		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 	}
 }
 

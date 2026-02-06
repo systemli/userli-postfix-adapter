@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -160,7 +160,7 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok"}`)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // readyHandler handles readiness probe requests (checks Userli API connectivity)
@@ -184,17 +184,17 @@ func readyHandler(userliClient UserliService) http.HandlerFunc {
 			if err != nil {
 				healthCheckStatus.Set(0)
 				w.WriteHeader(http.StatusServiceUnavailable)
-				fmt.Fprintf(w, `{"status":"unavailable","error":"%s"}`, err.Error())
+				_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "error": err.Error()})
 				logger.Warn("Readiness check failed", zap.Error(err))
 				return
 			}
 			healthCheckStatus.Set(1)
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"status":"ready"}`)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 		case <-ctx.Done():
 			healthCheckStatus.Set(0)
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, `{"status":"unavailable","error":"timeout"}`)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "error": "timeout"})
 			logger.Warn("Readiness check timeout")
 		}
 	}
