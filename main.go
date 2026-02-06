@@ -34,7 +34,7 @@ func init() {
 }
 
 func main() {
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	config, err := NewConfig()
 	if err != nil {
