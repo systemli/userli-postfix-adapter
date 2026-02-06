@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -91,18 +91,18 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 	// Graceful shutdown handler
 	go func() {
 		<-ctx.Done()
-		log.Info("Shutting down metrics server...")
+		logger.Info("Shutting down metrics server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.WithError(err).Error("Error shutting down metrics server")
+			logger.Error("Error shutting down metrics server", zap.Error(err))
 		}
-		log.Info("Metrics server stopped")
+		logger.Info("Metrics server stopped")
 	}()
 
-	log.WithField("addr", listenAddr).Info("Metrics server started")
+	logger.Info("Metrics server started", zap.String("addr", listenAddr))
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.WithError(err).Fatal("Metrics server failed")
+		logger.Fatal("Metrics server failed", zap.Error(err))
 	}
 }
 
@@ -135,7 +135,7 @@ func readyHandler(userliClient UserliService) http.HandlerFunc {
 				healthCheckStatus.Set(0)
 				w.WriteHeader(http.StatusServiceUnavailable)
 				fmt.Fprintf(w, `{"status":"unavailable","error":"%s"}`, err.Error())
-				log.WithError(err).Warn("Readiness check failed")
+				logger.Warn("Readiness check failed", zap.Error(err))
 				return
 			}
 			healthCheckStatus.Set(1)
@@ -145,7 +145,7 @@ func readyHandler(userliClient UserliService) http.HandlerFunc {
 			healthCheckStatus.Set(0)
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprintf(w, `{"status":"unavailable","error":"timeout"}`)
-			log.Warn("Readiness check timeout")
+			logger.Warn("Readiness check timeout")
 		}
 	}
 }

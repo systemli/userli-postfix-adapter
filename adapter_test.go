@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	"go.uber.org/zap"
 )
 
 // Mock connection for testing
@@ -50,6 +51,7 @@ func (m *MockConn) GetWritten() string {
 }
 
 func TestSocketmapResponse_String(t *testing.T) {
+	logger = zap.NewNop()
 	tests := []struct {
 		name     string
 		response SocketmapResponse

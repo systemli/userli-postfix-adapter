@@ -1,13 +1,12 @@
 package main
 
 import (
-	"io"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type ConfigTestSuite struct {
@@ -15,25 +14,26 @@ type ConfigTestSuite struct {
 }
 
 func (s *ConfigTestSuite) SetupTest() {
-	log.SetOutput(io.Discard)
+	logger = zap.NewNop()
 }
 
 func (s *ConfigTestSuite) TestNewConfig() {
 	s.Run("fail when userli token not set", func() {
-		defer func() { log.StandardLogger().ExitFunc = nil }()
-		var fatal bool
-		log.StandardLogger().ExitFunc = func(int) { fatal = true }
+		os.Unsetenv("USERLI_TOKEN")
 
-		_ = NewConfig()
+		config, err := NewConfig()
 
-		s.True(fatal)
+		s.Nil(config)
+		s.Error(err)
+		s.Contains(err.Error(), "USERLI_TOKEN is required")
 	})
 
 	s.Run("default config", func() {
 		os.Setenv("USERLI_TOKEN", "token")
 
-		config := NewConfig()
+		config, err := NewConfig()
 
+		s.NoError(err)
 		s.Equal("token", config.UserliToken)
 		s.Equal("http://localhost:8000", config.UserliBaseURL)
 		s.Equal("", config.PostfixRecipientDelimiter)
@@ -48,8 +48,9 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		os.Setenv("SOCKETMAP_LISTEN_ADDR", ":20001")
 		os.Setenv("METRICS_LISTEN_ADDR", ":20002")
 
-		config := NewConfig()
+		config, err := NewConfig()
 
+		s.NoError(err)
 		s.Equal("token", config.UserliToken)
 		s.Equal("http://example.com", config.UserliBaseURL)
 		s.Equal("+", config.PostfixRecipientDelimiter)
