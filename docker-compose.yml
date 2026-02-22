@@ -7,6 +7,7 @@ services:
     ports:
       - "10001:10001"
       - "10002:10002"
+      - "10003:10003"
     env_file:
       - .env
     networks:
@@ -22,6 +23,7 @@ services:
       POSTFIX_virtual_mailbox_domains: "socketmap:inet:adapter:10001:domain"
       POSTFIX_virtual_mailbox_maps: "socketmap:inet:adapter:10001:mailbox"
       POSTFIX_smtpd_sender_login_maps: "socketmap:inet:adapter:10001:senders"
+      POSTFIX_smtpd_end_of_data_restrictions: "check_policy_service inet:adapter:10003"
     networks:
       - userli
 

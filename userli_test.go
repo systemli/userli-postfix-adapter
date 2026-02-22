@@ -227,6 +227,68 @@ func (s *UserliTestSuite) TestGetSenders() {
 	})
 }
 
+func (s *UserliTestSuite) TestGetQuota() {
+	s.Run("success", func() {
+		gock.New("http://localhost:8000").
+			Get("/api/postfix/smtp_quota/user@example.com").
+			MatchHeader("Authorization", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
+			Reply(200).
+			JSON(map[string]int{"per_hour": 50, "per_day": 500})
+
+		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
+		s.NoError(err)
+		s.NotNil(quota)
+		s.Equal(50, quota.PerHour)
+		s.Equal(500, quota.PerDay)
+		s.True(gock.IsDone())
+	})
+
+	s.Run("no email", func() {
+		quota, err := s.userli.GetQuota(context.Background(), "user")
+		s.Error(err)
+		s.Nil(quota)
+	})
+
+	s.Run("server error", func() {
+		gock.New("http://localhost:8000").
+			Get("/api/postfix/smtp_quota/user@example.com").
+			MatchHeader("Authorization", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
+			Reply(500).
+			JSON(map[string]string{"error": "internal server error"})
+
+		// call() does not check HTTP status codes, so the response body
+		// is decoded into a Quota struct with zero values (no matching keys).
+		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
+		s.NoError(err)
+		s.NotNil(quota)
+		s.Equal(0, quota.PerHour)
+		s.Equal(0, quota.PerDay)
+		s.True(gock.IsDone())
+	})
+
+	s.Run("invalid json", func() {
+		gock.New("http://localhost:8000").
+			Get("/api/postfix/smtp_quota/user@example.com").
+			MatchHeader("Authorization", "Bearer insecure").
+			MatchHeader("Accept", "application/json").
+			MatchHeader("Content-Type", "application/json").
+			MatchHeader("User-Agent", "userli-postfix-adapter").
+			Reply(200).
+			BodyString("not valid json")
+
+		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
+		s.Error(err)
+		s.Nil(quota)
+		s.True(gock.IsDone())
+	})
+}
+
 func (s *UserliTestSuite) TestWithClient() {
 	s.Run("sets custom client", func() {
 		customClient := &http.Client{}
