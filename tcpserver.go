@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -23,6 +22,7 @@ const (
 type TCPServerConfig struct {
 	Name                 string
 	Addr                 string
+	Logger               *zap.Logger
 	OnConnectionAcquired func()
 	OnConnectionReleased func()
 	OnConnectionPoolFull func()
@@ -55,7 +55,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 
 	listener, err := lc.Listen(ctx, "tcp", config.Addr)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to create %s listener", config.Name),
+		config.Logger.Error("Failed to create listener",
 			zap.String("addr", config.Addr), zap.Error(err))
 		return
 	}
@@ -64,15 +64,15 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 	// Graceful shutdown handler
 	go func() {
 		<-ctx.Done()
-		logger.Info(fmt.Sprintf("Shutting down %s server...", config.Name),
+		config.Logger.Info("Shutting down server...",
 			zap.String("addr", config.Addr))
 		listener.Close()
 		activeConnWg.Wait()
-		logger.Info(fmt.Sprintf("All %s connections closed", config.Name),
+		config.Logger.Info("All connections closed",
 			zap.String("addr", config.Addr))
 	}()
 
-	logger.Info(fmt.Sprintf("%s server started", config.Name),
+	config.Logger.Info("Server started",
 		zap.String("addr", config.Addr))
 
 	for {
@@ -81,7 +81,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			if ctx.Err() != nil {
 				return
 			}
-			logger.Error("Accept failed",
+			config.Logger.Error("Accept failed",
 				zap.String("addr", config.Addr), zap.Error(err))
 			continue
 		}
@@ -99,7 +99,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			}
 			go handleTCPConnection(ctx, conn, handler, connSemaphore, &activeConnWg, cb)
 		default:
-			logger.Warn(fmt.Sprintf("Connection pool full, rejecting %s connection", config.Name),
+			config.Logger.Warn("Connection pool full, rejecting connection",
 				zap.String("addr", config.Addr))
 			if config.OnConnectionPoolFull != nil {
 				config.OnConnectionPoolFull()

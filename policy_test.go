@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // MockUserliService is a mock implementation for testing
@@ -79,7 +81,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "RCPT",
@@ -101,7 +103,7 @@ func TestPolicyServer_HandleRequest_NoSender(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -123,7 +125,7 @@ func TestPolicyServer_HandleRequest_APIError(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -146,7 +148,7 @@ func TestPolicyServer_HandleRequest_NoLimits(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -168,7 +170,7 @@ func TestPolicyServer_HandleRequest_AllowedMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -190,7 +192,7 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -223,7 +225,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	// First request uses sasl_username
 	req1 := &PolicyRequest{
@@ -253,7 +255,7 @@ func TestPolicyServer_Integration(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	// Start server on random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -315,7 +317,7 @@ func TestPolicyServer_HandleConnection(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -365,7 +367,7 @@ func TestPolicyServer_HandleConnection_MultipleRequests(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -410,7 +412,7 @@ func TestPolicyServer_StartPolicyServer(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter)
+	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup

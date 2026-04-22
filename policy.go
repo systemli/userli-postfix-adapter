@@ -18,21 +18,24 @@ import (
 type PolicyServer struct {
 	client      UserliService
 	rateLimiter *RateLimiter
+	logger      *zap.Logger
 }
 
 // NewPolicyServer creates a new PolicyServer with the given UserliService
-func NewPolicyServer(client UserliService, rateLimiter *RateLimiter) *PolicyServer {
+func NewPolicyServer(client UserliService, rateLimiter *RateLimiter, logger *zap.Logger) *PolicyServer {
 	return &PolicyServer{
 		client:      client,
 		rateLimiter: rateLimiter,
+		logger:      logger,
 	}
 }
 
 // StartPolicyServer starts the policy server on the given address
 func StartPolicyServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *PolicyServer) {
 	config := TCPServerConfig{
-		Name: "policy",
-		Addr: addr,
+		Name:   "policy",
+		Addr:   addr,
+		Logger: server.logger,
 		OnConnectionAcquired: func() {
 			policyActiveConnections.Inc()
 		},
@@ -65,7 +68,7 @@ func (p *PolicyServer) HandleConnection(ctx context.Context, conn net.Conn) {
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				return
 			}
-			logger.Debug("Failed to read policy request", zap.Error(err))
+			p.logger.Debug("Failed to read policy request", zap.Error(err))
 			return
 		}
 
@@ -73,7 +76,7 @@ func (p *PolicyServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 		_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 		if err := p.writeResponse(conn, response); err != nil {
-			logger.Error("Failed to write policy response", zap.Error(err))
+			p.logger.Error("Failed to write policy response", zap.Error(err))
 			return
 		}
 	}
@@ -162,7 +165,7 @@ func (p *PolicyServer) readRequest(reader *bufio.Reader) (*PolicyRequest, error)
 func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) string {
 	startTime := time.Now()
 
-	logger.Debug("Processing policy request",
+	p.logger.Debug("Processing policy request",
 		zap.String("queue_id", req.QueueID),
 		zap.String("sender", req.Sender),
 		zap.String("sasl_username", req.SaslUsername),
@@ -184,7 +187,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	}
 
 	if sender == "" {
-		logger.Debug("No sender identity found, allowing message")
+		p.logger.Debug("No sender identity found, allowing message")
 		policyRequestsTotal.WithLabelValues("check", "dunno").Inc()
 		policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())
 		return "DUNNO"
@@ -197,7 +200,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	quota, err := p.client.GetQuota(quotaCtx, sender)
 	if err != nil {
 		// API error - fail open (allow the message)
-		logger.Warn("Failed to fetch quota, allowing message",
+		p.logger.Warn("Failed to fetch quota, allowing message",
 			zap.String("queue_id", req.QueueID),
 			zap.String("sender", sender), zap.Error(err))
 		policyRequestsTotal.WithLabelValues("check", "error").Inc()
@@ -207,7 +210,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 
 	// No limits configured (both 0 means unlimited)
 	if quota.PerHour == 0 && quota.PerDay == 0 {
-		logger.Debug("No quota limits configured", zap.String("sender", sender))
+		p.logger.Debug("No quota limits configured", zap.String("sender", sender))
 		policyRequestsTotal.WithLabelValues("check", "dunno").Inc()
 		policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())
 		return "DUNNO"
@@ -220,7 +223,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	quotaChecksTotal.WithLabelValues("checked").Inc()
 
 	if !allowed {
-		logger.Info("Rate limit exceeded",
+		p.logger.Info("Rate limit exceeded",
 			zap.String("queue_id", req.QueueID),
 			zap.String("sender", sender),
 			zap.Int("hour_count", hourCount),
@@ -235,7 +238,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 		return "REJECT Rate limit exceeded, please try again later"
 	}
 
-	logger.Debug("Message allowed",
+	p.logger.Debug("Message allowed",
 		zap.String("queue_id", req.QueueID),
 		zap.String("sender", sender),
 		zap.Int("hour_count", hourCount),
