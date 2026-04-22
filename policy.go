@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -62,9 +61,11 @@ func (p *PolicyServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 		request, err := p.readRequest(reader)
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				logger.Debug("Failed to read policy request", zap.Error(err))
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return
 			}
+			logger.Debug("Failed to read policy request", zap.Error(err))
 			return
 		}
 

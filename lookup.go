@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -77,12 +77,11 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 		// Read the request netstring
 		requestBytes, err := decoder.Decode()
 		if err != nil {
-			// Check if this is a normal connection closure (EOF) or an actual error
-			if err == io.EOF {
-				logger.Debug("Client closed connection")
-			} else {
-				logger.Debug("Failed to decode request", zap.Error(err))
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return
 			}
+			logger.Debug("Failed to decode request", zap.Error(err))
 			return
 		}
 		request := string(requestBytes)
