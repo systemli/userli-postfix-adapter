@@ -42,13 +42,13 @@ func main() {
 	}
 
 	userli := NewUserli(config.UserliToken, config.UserliBaseURL, WithDelimiter(config.PostfixRecipientDelimiter))
-	lookupServer := NewLookupServer(userli)
+	lookupServer := NewLookupServer(userli, logger.Named("lookup"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	rateLimiter := NewRateLimiter(ctx)
-	policyServer := NewPolicyServer(userli, rateLimiter)
+	policyServer := NewPolicyServer(userli, rateLimiter, logger.Named("policy"))
 
 	var wg sync.WaitGroup
 

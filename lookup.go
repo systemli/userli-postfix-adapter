@@ -32,18 +32,20 @@ func (r *SocketmapResponse) String() string {
 // It implements the ConnectionHandler interface.
 type LookupServer struct {
 	client UserliService
+	logger *zap.Logger
 }
 
 // NewLookupServer creates a new LookupServer with the given UserliService
-func NewLookupServer(client UserliService) *LookupServer {
-	return &LookupServer{client: client}
+func NewLookupServer(client UserliService, logger *zap.Logger) *LookupServer {
+	return &LookupServer{client: client, logger: logger}
 }
 
 // StartLookupServer starts the lookup server on the given address
 func StartLookupServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *LookupServer) {
 	config := TCPServerConfig{
-		Name: "socketmap",
-		Addr: addr,
+		Name:   "lookup",
+		Addr:   addr,
+		Logger: server.logger,
 		OnConnectionAcquired: func() {
 			activeConnections.Inc()
 		},
@@ -81,7 +83,7 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				return
 			}
-			logger.Debug("Failed to decode request", zap.Error(err))
+			s.logger.Debug("Failed to decode request", zap.Error(err))
 			return
 		}
 		request := string(requestBytes)
@@ -91,7 +93,7 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 		// Parse the request: "name key"
 		parts := strings.SplitN(strings.TrimSpace(request), " ", 2)
 		if len(parts) != 2 {
-			logger.Error("Invalid request format", zap.String("request", request))
+			s.logger.Error("Invalid request format", zap.String("request", request))
 			response := &SocketmapResponse{Status: "PERM", Data: "Invalid request format"}
 			s.writeResponse(encoder, conn, response, now, "invalid")
 			continue
@@ -100,7 +102,7 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 		mapName := parts[0]
 		key := parts[1]
 
-		logger.Debug("Processing socketmap request",
+		s.logger.Debug("Processing socketmap request",
 			zap.String("map", mapName),
 			zap.String("key", key))
 
@@ -125,7 +127,7 @@ func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) 
 	case "senders":
 		return s.handleSenders(reqCtx, key)
 	default:
-		logger.Error("Unknown map name", zap.String("map", mapName))
+		s.logger.Error("Unknown map name", zap.String("map", mapName))
 		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 	}
 }
@@ -134,7 +136,7 @@ func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) 
 func (s *LookupServer) handleAlias(ctx context.Context, key string) *SocketmapResponse {
 	aliases, err := s.client.GetAliases(ctx, key)
 	if err != nil {
-		logger.Error("Error fetching aliases", zap.String("key", key), zap.Error(err))
+		s.logger.Error("Error fetching aliases", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching aliases"}
 	}
 
@@ -149,7 +151,7 @@ func (s *LookupServer) handleAlias(ctx context.Context, key string) *SocketmapRe
 func (s *LookupServer) handleDomain(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetDomain(ctx, key)
 	if err != nil {
-		logger.Error("Error fetching domain", zap.String("key", key), zap.Error(err))
+		s.logger.Error("Error fetching domain", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching domain"}
 	}
 
@@ -164,7 +166,7 @@ func (s *LookupServer) handleDomain(ctx context.Context, key string) *SocketmapR
 func (s *LookupServer) handleMailbox(ctx context.Context, key string) *SocketmapResponse {
 	exists, err := s.client.GetMailbox(ctx, key)
 	if err != nil {
-		logger.Error("Error fetching mailbox", zap.String("key", key), zap.Error(err))
+		s.logger.Error("Error fetching mailbox", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching mailbox"}
 	}
 
@@ -179,7 +181,7 @@ func (s *LookupServer) handleMailbox(ctx context.Context, key string) *Socketmap
 func (s *LookupServer) handleSenders(ctx context.Context, key string) *SocketmapResponse {
 	senders, err := s.client.GetSenders(ctx, key)
 	if err != nil {
-		logger.Error("Error fetching senders", zap.String("key", key), zap.Error(err))
+		s.logger.Error("Error fetching senders", zap.String("key", key), zap.Error(err))
 		return &SocketmapResponse{Status: "TEMP", Data: "Error fetching senders"}
 	}
 
@@ -202,7 +204,7 @@ func (s *LookupServer) writeResponse(encoder *netstring.Encoder, conn net.Conn, 
 		status = "error"
 	}
 
-	logger.Debug("Writing socketmap response",
+	s.logger.Debug("Writing socketmap response",
 		zap.String("response", response.String()),
 		zap.String("map", mapName),
 		zap.String("status", status))
@@ -213,7 +215,7 @@ func (s *LookupServer) writeResponse(encoder *netstring.Encoder, conn net.Conn, 
 	// Encode and send the response
 	err := encoder.EncodeString(netstring.NoKey, response.String())
 	if err != nil {
-		logger.Error("Error writing response",
+		s.logger.Error("Error writing response",
 			zap.String("response", response.String()),
 			zap.String("map", mapName),
 			zap.String("status", status),
