@@ -162,6 +162,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	startTime := time.Now()
 
 	logger.Debug("Processing policy request",
+		zap.String("queue_id", req.QueueID),
 		zap.String("sender", req.Sender),
 		zap.String("sasl_username", req.SaslUsername),
 		zap.String("protocol", req.ProtocolState))
@@ -196,6 +197,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	if err != nil {
 		// API error - fail open (allow the message)
 		logger.Warn("Failed to fetch quota, allowing message",
+			zap.String("queue_id", req.QueueID),
 			zap.String("sender", sender), zap.Error(err))
 		policyRequestsTotal.WithLabelValues("check", "error").Inc()
 		policyRequestDuration.WithLabelValues("check", "error").Observe(time.Since(startTime).Seconds())
@@ -218,6 +220,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 
 	if !allowed {
 		logger.Info("Rate limit exceeded",
+			zap.String("queue_id", req.QueueID),
 			zap.String("sender", sender),
 			zap.Int("hour_count", hourCount),
 			zap.Int("day_count", dayCount),
@@ -232,6 +235,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	}
 
 	logger.Debug("Message allowed",
+		zap.String("queue_id", req.QueueID),
 		zap.String("sender", sender),
 		zap.Int("hour_count", hourCount),
 		zap.Int("day_count", dayCount),
