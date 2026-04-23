@@ -89,6 +89,28 @@ var (
 		Name: "userli_postfix_adapter_policy_connection_pool_full_total",
 		Help: "Total number of policy connections rejected because the connection pool is full",
 	})
+
+	// SASL server metrics
+	saslActiveConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "userli_postfix_adapter_sasl_active_connections",
+		Help: "Number of currently active SASL auth connections",
+	})
+
+	saslAuthTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_sasl_auth_total",
+		Help: "Total number of SASL authentication attempts",
+	}, []string{"mechanism", "result"})
+
+	saslAuthDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "userli_postfix_adapter_sasl_auth_duration_seconds",
+		Help:    "Duration of SASL authentication requests",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 10),
+	}, []string{"mechanism", "result"})
+
+	saslConnectionPoolFullTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_sasl_connection_pool_full_total",
+		Help: "Total number of SASL connections rejected because the connection pool is full",
+	})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
@@ -123,6 +145,10 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		quotaChecksTotal,
 		policyConnectionPoolFullTotal,
 		trackedSenders,
+		saslActiveConnections,
+		saslAuthTotal,
+		saslAuthDuration,
+		saslConnectionPoolFullTotal,
 	)
 
 	mux := http.NewServeMux()

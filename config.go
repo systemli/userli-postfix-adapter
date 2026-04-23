@@ -24,6 +24,11 @@ type Config struct {
 
 	// MetricsListenAddr is the address to listen for metrics requests.
 	MetricsListenAddr string
+
+	// SASLListenAddr is the address to listen for Dovecot SASL auth requests.
+	// Supports TCP (e.g. ":10004") or UNIX socket (e.g. "/var/spool/postfix/private/auth").
+	// Leave empty to disable the SASL auth server.
+	SASLListenAddr string
 }
 
 // NewConfig creates a new Config with default values.
@@ -55,6 +60,8 @@ func NewConfig() (*Config, error) {
 		policyListenAddr = ":10003"
 	}
 
+	saslListenAddr := os.Getenv("SASL_LISTEN_ADDR")
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -62,5 +69,6 @@ func NewConfig() (*Config, error) {
 		SocketmapListenAddr:       socketmapListenAddr,
 		PolicyListenAddr:          policyListenAddr,
 		MetricsListenAddr:         metricsListenAddr,
+		SASLListenAddr:            saslListenAddr,
 	}, nil
 }

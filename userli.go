@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ type UserliService interface {
 	GetMailbox(ctx context.Context, email string) (bool, error)
 	GetSenders(ctx context.Context, email string) ([]string, error)
 	GetQuota(ctx context.Context, email string) (*Quota, error)
+	Authenticate(ctx context.Context, email, password string) (bool, string, error)
 }
 
 // Quota represents the sending quota limits for a user
@@ -141,7 +143,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 		return []string{}, nil
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, sanitizedEmail))
+	resp, err := u.call(ctx, "GET", fmt.Sprintf("%s/api/postfix/alias/%s", u.baseURL, sanitizedEmail), nil)
 	if err != nil {
 		return []string{}, err
 	}
@@ -157,7 +159,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 }
 
 func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
+	resp, err := u.call(ctx, "GET", fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain), nil)
 	if err != nil {
 		logger.Info("unable to process the domain", zap.String("domain", domain), zap.Error(err))
 		return false, err
@@ -180,7 +182,7 @@ func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 		return false, nil
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, sanitizedEmail))
+	resp, err := u.call(ctx, "GET", fmt.Sprintf("%s/api/postfix/mailbox/%s", u.baseURL, sanitizedEmail), nil)
 	if err != nil {
 		return false, err
 	}
@@ -202,7 +204,7 @@ func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error)
 		return []string{}, nil
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, sanitizedEmail))
+	resp, err := u.call(ctx, "GET", fmt.Sprintf("%s/api/postfix/senders/%s", u.baseURL, sanitizedEmail), nil)
 	if err != nil {
 		return []string{}, err
 	}
@@ -224,7 +226,7 @@ func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 		return nil, err
 	}
 
-	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/smtp_quota/%s", u.baseURL, sanitizedEmail))
+	resp, err := u.call(ctx, "GET", fmt.Sprintf("%s/api/postfix/smtp_quota/%s", u.baseURL, sanitizedEmail), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -239,25 +241,69 @@ func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 	return &quota, nil
 }
 
-func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {
+func (u *Userli) Authenticate(ctx context.Context, email, password string) (bool, string, error) {
+	sanitizedEmail, err := u.sanitizeEmail(email)
+	if err != nil {
+		logger.Info("unable to process authentication request", zap.Error(err))
+		return false, "authentication failed", nil
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"email":    sanitizedEmail,
+		"password": password,
+	})
+	if err != nil {
+		return false, "", fmt.Errorf("failed to marshal auth request: %w", err)
+	}
+
+	resp, err := u.call(ctx, "POST", fmt.Sprintf("%s/api/postfix/auth", u.baseURL), body)
+	if err != nil {
+		return false, "", err
+	}
+	defer resp.Body.Close()
+
+	// Parse the JSON response message from the API
+	var result struct {
+		Message string `json:"message"`
+	}
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil || result.Message == "" {
+		result.Message = "unexpected error"
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, result.Message, nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return false, result.Message, nil
+	default:
+		return false, result.Message, fmt.Errorf("unexpected status code from auth API: %d", resp.StatusCode)
+	}
+}
+
+func (u *Userli) call(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
 	startTime := time.Now()
 
-	// Create request with context that has a timeout
-	// If the parent context already has a deadline, use it
-	// Otherwise, set a default timeout of 5 seconds for API calls
+	// If the parent context already has a deadline, use it.
+	// Otherwise, set a default timeout of 5 seconds for API calls.
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	var bodyReader *bytes.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	} else {
+		bodyReader = bytes.NewReader(nil)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.token))
-
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "userli-postfix-adapter")
@@ -269,13 +315,18 @@ func (u *Userli) call(ctx context.Context, url string) (*http.Response, error) {
 
 	resp, err := client.Do(req)
 
-	// Extract endpoint name from URL path for metrics
+	// Extract endpoint name from URL path for metrics.
+	// For paths like /api/postfix/alias/user@example.org -> "alias"
+	// For paths like /api/postfix/auth -> "auth"
 	endpoint := "unknown"
-	if resp != nil {
-		// Extract last part of path (alias, domain, mailbox, senders)
-		parts := strings.Split(url, "/")
-		if len(parts) >= 5 {
-			endpoint = parts[len(parts)-2]
+	urlParts := strings.Split(strings.TrimRight(url, "/"), "/")
+	if len(urlParts) >= 2 {
+		candidate := urlParts[len(urlParts)-2]
+		// If the second-to-last segment is "postfix", the last segment is the endpoint
+		if candidate == "postfix" {
+			endpoint = urlParts[len(urlParts)-1]
+		} else {
+			endpoint = candidate
 		}
 	}
 
