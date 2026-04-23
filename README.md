@@ -15,6 +15,7 @@ The adapter is configured via environment variables:
 - `SOCKETMAP_LISTEN_ADDR`: The address to listen on for socketmap requests. Default: `:10001`.
 - `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
+- `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
 

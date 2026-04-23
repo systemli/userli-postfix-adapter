@@ -24,6 +24,9 @@ type Config struct {
 
 	// MetricsListenAddr is the address to listen for metrics requests.
 	MetricsListenAddr string
+
+	// RateLimitMessage is the message returned when rate limit is exceeded.
+	RateLimitMessage string
 }
 
 // NewConfig creates a new Config with default values.
@@ -55,6 +58,11 @@ func NewConfig() (*Config, error) {
 		policyListenAddr = ":10003"
 	}
 
+	rateLimitMessage := os.Getenv("RATE_LIMIT_MESSAGE")
+	if rateLimitMessage == "" {
+		rateLimitMessage = "Rate limit exceeded, please try again later"
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -62,5 +70,6 @@ func NewConfig() (*Config, error) {
 		SocketmapListenAddr:       socketmapListenAddr,
 		PolicyListenAddr:          policyListenAddr,
 		MetricsListenAddr:         metricsListenAddr,
+		RateLimitMessage:          rateLimitMessage,
 	}, nil
 }

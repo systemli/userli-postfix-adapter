@@ -16,17 +16,19 @@ import (
 // PolicyServer implements a Postfix SMTP Access Policy Delegation server
 // for rate limiting outgoing mail based on sender quotas.
 type PolicyServer struct {
-	client      UserliService
-	rateLimiter *RateLimiter
-	logger      *zap.Logger
+	client           UserliService
+	rateLimiter      *RateLimiter
+	rateLimitMessage string
+	logger           *zap.Logger
 }
 
 // NewPolicyServer creates a new PolicyServer with the given UserliService
-func NewPolicyServer(client UserliService, rateLimiter *RateLimiter, logger *zap.Logger) *PolicyServer {
+func NewPolicyServer(client UserliService, rateLimiter *RateLimiter, rateLimitMessage string, logger *zap.Logger) *PolicyServer {
 	return &PolicyServer{
-		client:      client,
-		rateLimiter: rateLimiter,
-		logger:      logger,
+		client:           client,
+		rateLimiter:      rateLimiter,
+		rateLimitMessage: rateLimitMessage,
+		logger:           logger,
 	}
 }
 
@@ -235,7 +237,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 		policyRequestDuration.WithLabelValues("check", "reject").Observe(time.Since(startTime).Seconds())
 		quotaExceededTotal.Inc()
 
-		return "REJECT Rate limit exceeded, please try again later"
+		return "REJECT " + p.rateLimitMessage
 	}
 
 	p.logger.Debug("Message allowed",

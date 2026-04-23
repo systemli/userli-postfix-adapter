@@ -39,6 +39,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal("", config.PostfixRecipientDelimiter)
 		s.Equal(":10001", config.SocketmapListenAddr)
 		s.Equal(":10002", config.MetricsListenAddr)
+		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
 	})
 
 	s.Run("custom config", func() {
@@ -47,6 +48,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		os.Setenv("POSTFIX_RECIPIENT_DELIMITER", "+")
 		os.Setenv("SOCKETMAP_LISTEN_ADDR", ":20001")
 		os.Setenv("METRICS_LISTEN_ADDR", ":20002")
+		os.Setenv("RATE_LIMIT_MESSAGE", "Too many emails")
 
 		config, err := NewConfig()
 
@@ -56,6 +58,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal("+", config.PostfixRecipientDelimiter)
 		s.Equal(":20001", config.SocketmapListenAddr)
 		s.Equal(":20002", config.MetricsListenAddr)
+		s.Equal("Too many emails", config.RateLimitMessage)
 	})
 }
 
