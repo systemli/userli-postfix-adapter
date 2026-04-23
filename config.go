@@ -40,6 +40,11 @@ type Config struct {
 	// LookupCacheTTL is the TTL for cached successful lookup responses.
 	// Zero disables caching entirely.
 	LookupCacheTTL time.Duration
+
+	// SASLListenAddr is the address to listen for Dovecot SASL auth requests.
+	// Supports TCP (e.g. ":10004") or UNIX socket (e.g. "/var/spool/postfix/private/auth").
+	// Leave empty to disable the SASL auth server.
+	SASLListenAddr string
 }
 
 // NewConfig creates a new Config with default values.
@@ -93,6 +98,8 @@ func NewConfig() (*Config, error) {
 		lookupCacheTTL = parsed
 	}
 
+	saslListenAddr := os.Getenv("SASL_LISTEN_ADDR")
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -103,5 +110,6 @@ func NewConfig() (*Config, error) {
 		RateLimitMessage:          rateLimitMessage,
 		RedisURL:                  redisURL,
 		LookupCacheTTL:            lookupCacheTTL,
+		SASLListenAddr:            saslListenAddr,
 	}, nil
 }
