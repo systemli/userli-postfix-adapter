@@ -64,6 +64,12 @@ func main() {
 	wg.Add(1)
 	go StartPolicyServer(ctx, &wg, config.PolicyListenAddr, policyServer)
 
+	if config.SASLListenAddr != "" {
+		saslServer := NewSASLServer(userli, logger.Named("sasl"))
+		wg.Add(1)
+		go StartSASLServer(ctx, &wg, config.SASLListenAddr, saslServer)
+	}
+
 	wg.Wait()
 	logger.Info("All servers stopped")
 }

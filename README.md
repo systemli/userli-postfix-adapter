@@ -4,6 +4,7 @@
 
 This is a postfix socketmap adapter for the [userli](https://github.com/systemli/userli) project.
 It implements the [socketmap protocol](https://www.postfix.org/socketmap_table.5.html) to provide dynamic lookups for aliases, domains, mailboxes, and senders.
+It also provides a Dovecot SASL authentication server, allowing Postfix to authenticate SMTP clients against the Userli API without requiring Dovecot.
 
 ## Configuration
 
@@ -14,6 +15,7 @@ The adapter is configured via environment variables:
 - `POSTFIX_RECIPIENT_DELIMITER`: The recipient delimiter used in Postfix (e.g., `+`). Default: empty.
 - `SOCKETMAP_LISTEN_ADDR`: The address to listen on for socketmap requests. Default: `:10001`.
 - `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
+- `SASL_LISTEN_ADDR`: The address to listen on for Dovecot SASL authentication. Supports TCP (e.g., `:10006`) and UNIX sockets (e.g., `/var/spool/postfix/private/auth`). Default: empty (disabled).
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
@@ -46,6 +48,28 @@ The Userli API endpoint `/api/postfix/smtp_quota/{email}` returns:
 ```
 
 Where `0` means unlimited. If the API is unreachable, messages are allowed (fail-open).
+
+### SASL Authentication (Dovecot SASL)
+
+The adapter implements the Dovecot SASL authentication protocol, so Postfix can authenticate SMTP clients via `smtpd_sasl_type=dovecot` without requiring Dovecot itself. Authentication is performed against the Userli API (`/api/postfix/auth`). Supported mechanisms: PLAIN and LOGIN.
+
+**Important:** SASL authentication is fail-closed. If the API is unreachable, authentication is rejected.
+
+Configure in Postfix `main.cf` (TCP):
+
+```text
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:localhost:10006
+smtpd_sasl_auth_enable = yes
+```
+
+Or using a UNIX socket (set `SASL_LISTEN_ADDR=/var/spool/postfix/private/auth`):
+
+```text
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+```
 
 ## Docker
 
@@ -172,6 +196,13 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 - `userli_postfix_adapter_quota_exceeded_total` - Total messages rejected due to quota
 - `userli_postfix_adapter_quota_checks_total` - Total quota checks performed
 - `userli_postfix_adapter_tracked_senders` - Number of senders tracked by rate limiter
+
+**SASL Authentication Metrics:**
+
+- `userli_postfix_adapter_sasl_active_connections` - Active SASL connections gauge
+- `userli_postfix_adapter_sasl_auth_total` - Total SASL authentication attempts (by mechanism and result)
+- `userli_postfix_adapter_sasl_auth_duration_seconds` - SASL authentication duration histogram
+- `userli_postfix_adapter_sasl_connection_pool_full_total` - SASL connection pool rejections
 
 All metrics include relevant labels (handler, status, endpoint, etc.).
 
