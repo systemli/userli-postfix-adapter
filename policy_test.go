@@ -81,7 +81,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "RCPT",
@@ -103,7 +103,7 @@ func TestPolicyServer_HandleRequest_NoSender(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -125,7 +125,7 @@ func TestPolicyServer_HandleRequest_APIError(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -148,7 +148,7 @@ func TestPolicyServer_HandleRequest_NoLimits(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -170,7 +170,7 @@ func TestPolicyServer_HandleRequest_AllowedMessage(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -192,7 +192,7 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
 		ProtocolState: "END-OF-MESSAGE",
@@ -218,6 +218,31 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 	}
 }
 
+func TestPolicyServer_HandleRequest_CustomRateLimitMessage(t *testing.T) {
+	mockClient := &MockUserliServiceForPolicy{
+		quota: &Quota{PerHour: 1, PerDay: 100},
+	}
+	rateLimiter := &RateLimiter{
+		counters: make(map[string]*senderCounter),
+	}
+	server := NewPolicyServer(mockClient, rateLimiter, "Too many emails", zap.NewNop())
+
+	req := &PolicyRequest{
+		ProtocolState: "END-OF-MESSAGE",
+		Sender:        "user@example.org",
+		SaslUsername:  "user@example.org",
+	}
+
+	// First message passes
+	server.handleRequest(context.Background(), req)
+
+	// Second message should be rejected with custom message
+	response := server.handleRequest(context.Background(), req)
+	if response != "REJECT Too many emails" {
+		t.Errorf("Expected 'REJECT Too many emails', got %s", response)
+	}
+}
+
 func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 1, PerDay: 100},
@@ -225,7 +250,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	// First request uses sasl_username
 	req1 := &PolicyRequest{
@@ -255,7 +280,7 @@ func TestPolicyServer_Integration(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	// Start server on random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -317,7 +342,7 @@ func TestPolicyServer_HandleConnection(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -367,7 +392,7 @@ func TestPolicyServer_HandleConnection_MultipleRequests(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -412,7 +437,7 @@ func TestPolicyServer_StartPolicyServer(t *testing.T) {
 	rateLimiter := &RateLimiter{
 		counters: make(map[string]*senderCounter),
 	}
-	server := NewPolicyServer(mockClient, rateLimiter, zap.NewNop())
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
