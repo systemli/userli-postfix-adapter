@@ -89,22 +89,16 @@ var (
 		Name: "userli_postfix_adapter_policy_connection_pool_full_total",
 		Help: "Total number of policy connections rejected because the connection pool is full",
 	})
+
+	rateLimitBackendErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_ratelimit_backend_errors_total",
+		Help: "Total number of rate-limit backend (Redis) errors, by operation",
+	}, []string{"operation"})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
-func StartMetricsServer(ctx context.Context, listenAddr string, userliClient UserliService, rateLimiter *RateLimiter) {
+func StartMetricsServer(ctx context.Context, listenAddr string, userliClient UserliService) {
 	registry := prometheus.NewRegistry()
-
-	// Create tracked senders gauge with closure capturing the rate limiter
-	trackedSenders := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "userli_postfix_adapter_tracked_senders",
-		Help: "Number of senders currently tracked by rate limiter",
-	}, func() float64 {
-		if rateLimiter != nil {
-			return float64(rateLimiter.SenderCount())
-		}
-		return 0
-	})
 
 	registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -122,7 +116,7 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		quotaExceededTotal,
 		quotaChecksTotal,
 		policyConnectionPoolFullTotal,
-		trackedSenders,
+		rateLimitBackendErrors,
 	)
 
 	mux := http.NewServeMux()

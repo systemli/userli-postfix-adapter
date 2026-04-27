@@ -1,17 +1,34 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
-func TestRateLimiter_CheckAndIncrement_NoLimits(t *testing.T) {
+func newTestRateLimiter(t *testing.T) (*RateLimiter, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
+		client: client,
+		script: redis.NewScript(rateLimitScript),
+		logger: zap.NewNop(),
 	}
+	t.Cleanup(func() { _ = client.Close() })
+	return rl, mr
+}
+
+func TestRateLimiter_CheckAndIncrement_NoLimits(t *testing.T) {
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
 	quota := &Quota{PerHour: 0, PerDay: 0}
-	allowed, hourCount, dayCount := rl.CheckAndIncrement("test@example.org", quota)
+	allowed, hourCount, dayCount := rl.CheckAndIncrement(ctx, "test@example.org", quota)
 
 	if !allowed {
 		t.Error("Expected message to be allowed when no limits are set")
@@ -22,11 +39,10 @@ func TestRateLimiter_CheckAndIncrement_NoLimits(t *testing.T) {
 }
 
 func TestRateLimiter_CheckAndIncrement_NilQuota(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
-	allowed, hourCount, dayCount := rl.CheckAndIncrement("test@example.org", nil)
+	allowed, hourCount, dayCount := rl.CheckAndIncrement(ctx, "test@example.org", nil)
 
 	if !allowed {
 		t.Error("Expected message to be allowed when quota is nil")
@@ -37,211 +53,163 @@ func TestRateLimiter_CheckAndIncrement_NilQuota(t *testing.T) {
 }
 
 func TestRateLimiter_CheckAndIncrement_HourlyLimit(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
 	quota := &Quota{PerHour: 3, PerDay: 100}
 	sender := "test@example.org"
 
-	// First 3 messages should be allowed
 	for i := 0; i < 3; i++ {
-		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
+		allowed, _, _ := rl.CheckAndIncrement(ctx, sender, quota)
 		if !allowed {
 			t.Errorf("Message %d should be allowed", i+1)
 		}
 	}
 
-	// 4th message should be rejected but still counted
-	allowed, hourCount, _ := rl.CheckAndIncrement(sender, quota)
+	allowed, hourCount, _ := rl.CheckAndIncrement(ctx, sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to hourly limit")
 	}
-	if hourCount != 4 {
-		t.Errorf("Expected hourCount to be 4, got %d", hourCount)
+	if hourCount != 3 {
+		t.Errorf("Expected hourCount to be 3, got %d", hourCount)
 	}
 }
 
 func TestRateLimiter_CheckAndIncrement_DailyLimit(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
 	quota := &Quota{PerHour: 100, PerDay: 3}
 	sender := "test@example.org"
 
-	// First 3 messages should be allowed
 	for i := 0; i < 3; i++ {
-		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
+		allowed, _, _ := rl.CheckAndIncrement(ctx, sender, quota)
 		if !allowed {
 			t.Errorf("Message %d should be allowed", i+1)
 		}
 	}
 
-	// 4th message should be rejected but still counted
-	allowed, _, dayCount := rl.CheckAndIncrement(sender, quota)
+	allowed, _, dayCount := rl.CheckAndIncrement(ctx, sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to daily limit")
 	}
-	if dayCount != 4 {
-		t.Errorf("Expected dayCount to be 4, got %d", dayCount)
+	if dayCount != 3 {
+		t.Errorf("Expected dayCount to be 3, got %d", dayCount)
 	}
 }
 
 func TestRateLimiter_CheckAndIncrement_MultipleSenders(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
 	quota := &Quota{PerHour: 2, PerDay: 10}
 	sender1 := "user1@example.org"
 	sender2 := "user2@example.org"
 
-	// Each sender should have their own quota
 	for i := 0; i < 2; i++ {
-		allowed1, _, _ := rl.CheckAndIncrement(sender1, quota)
-		allowed2, _, _ := rl.CheckAndIncrement(sender2, quota)
+		allowed1, _, _ := rl.CheckAndIncrement(ctx, sender1, quota)
+		allowed2, _, _ := rl.CheckAndIncrement(ctx, sender2, quota)
 		if !allowed1 || !allowed2 {
 			t.Errorf("Message %d should be allowed for both senders", i+1)
 		}
 	}
 
-	// Both should be at limit now
-	allowed1, _, _ := rl.CheckAndIncrement(sender1, quota)
-	allowed2, _, _ := rl.CheckAndIncrement(sender2, quota)
+	allowed1, _, _ := rl.CheckAndIncrement(ctx, sender1, quota)
+	allowed2, _, _ := rl.CheckAndIncrement(ctx, sender2, quota)
 	if allowed1 || allowed2 {
 		t.Error("3rd message should be rejected for both senders")
 	}
 }
 
-func TestRateLimiter_CheckAndIncrement_RejectedRequestsExtendWindow(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
-
-	quota := &Quota{PerHour: 2, PerDay: 100}
-	sender := "spammer@example.org"
-
-	// Use up the hourly quota
-	for i := 0; i < 2; i++ {
-		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
-		if !allowed {
-			t.Errorf("Message %d should be allowed", i+1)
-		}
-	}
-
-	// Simulate continued spam attempts while over limit.
-	// Each rejected request should still be recorded so the sender
-	// cannot simply wait for the oldest timestamps to expire.
-	for i := 0; i < 5; i++ {
-		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
-		if allowed {
-			t.Errorf("Spam attempt %d should be rejected", i+1)
-		}
-	}
-
-	// Verify that rejected attempts were counted
-	hourCount, dayCount := rl.GetCounts(sender)
-	if hourCount != 7 {
-		t.Errorf("Expected hourCount to include rejected attempts (7), got %d", hourCount)
-	}
-	if dayCount != 7 {
-		t.Errorf("Expected dayCount to include rejected attempts (7), got %d", dayCount)
-	}
-}
-
 func TestRateLimiter_GetCounts(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
 	sender := "test@example.org"
 	quota := &Quota{PerHour: 100, PerDay: 100}
 
-	// Send 5 messages
 	for i := 0; i < 5; i++ {
-		rl.CheckAndIncrement(sender, quota)
+		rl.CheckAndIncrement(ctx, sender, quota)
 	}
 
-	hourCount, dayCount := rl.GetCounts(sender)
+	hourCount, dayCount := rl.GetCounts(ctx, sender)
 	if hourCount != 5 || dayCount != 5 {
 		t.Errorf("Expected counts to be 5, got hour=%d, day=%d", hourCount, dayCount)
 	}
 }
 
 func TestRateLimiter_GetCounts_NonexistentSender(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
 
-	hourCount, dayCount := rl.GetCounts("nonexistent@example.org")
+	hourCount, dayCount := rl.GetCounts(ctx, "nonexistent@example.org")
 	if hourCount != 0 || dayCount != 0 {
 		t.Errorf("Expected counts to be 0 for nonexistent sender, got hour=%d, day=%d", hourCount, dayCount)
 	}
 }
 
-func TestRateLimiter_Cleanup(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
+// TestRateLimiter_KeyTTL ensures the rate-limit key is set with an EXPIRE
+// so quiet senders get cleaned up automatically (replacing the old cleanup goroutine).
+func TestRateLimiter_KeyTTL(t *testing.T) {
+	rl, mr := newTestRateLimiter(t)
+	ctx := context.Background()
+
+	rl.CheckAndIncrement(ctx, "ttl@example.org", &Quota{PerHour: 10, PerDay: 100})
+
+	key := keyFor("ttl@example.org")
+	ttl := mr.TTL(key)
+	if ttl <= 0 {
+		t.Fatalf("Expected positive TTL on rate-limit key, got %v", ttl)
+	}
+	if ttl > rateLimitTTL+time.Minute {
+		t.Errorf("Expected TTL <= %v, got %v", rateLimitTTL, ttl)
 	}
 
-	sender := "test@example.org"
-
-	// Add an old timestamp manually
-	rl.counters[sender] = &senderCounter{
-		timestamps: []time.Time{
-			time.Now().Add(-25 * time.Hour), // Older than 24 hours
-			time.Now().Add(-1 * time.Hour),  // Within 24 hours
-		},
-	}
-
-	rl.cleanup()
-
-	counter := rl.counters[sender]
-	if counter == nil {
-		t.Fatal("Counter should still exist")
-	}
-
-	if len(counter.timestamps) != 1 {
-		t.Errorf("Expected 1 timestamp after cleanup, got %d", len(counter.timestamps))
+	// Advance the mock clock past the TTL — the key must be gone.
+	mr.FastForward(rateLimitTTL + time.Minute)
+	if mr.Exists(key) {
+		t.Error("Expected key to be expired after FastForward past TTL")
 	}
 }
 
-func TestRateLimiter_Cleanup_RemovesEmptySender(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
+// TestRateLimiter_RejectedDoesNotIncrement guards the conditional-ZADD invariant
+// in the Lua script: a rejected message must not push the counter above the limit.
+func TestRateLimiter_RejectedDoesNotIncrement(t *testing.T) {
+	rl, _ := newTestRateLimiter(t)
+	ctx := context.Background()
+
+	quota := &Quota{PerHour: 2, PerDay: 100}
+	sender := "reject@example.org"
+
+	for i := 0; i < 2; i++ {
+		rl.CheckAndIncrement(ctx, sender, quota)
 	}
 
-	sender := "test@example.org"
-
-	// Add only old timestamps
-	rl.counters[sender] = &senderCounter{
-		timestamps: []time.Time{
-			time.Now().Add(-25 * time.Hour),
-			time.Now().Add(-26 * time.Hour),
-		},
+	for i := 0; i < 5; i++ {
+		allowed, _, _ := rl.CheckAndIncrement(ctx, sender, quota)
+		if allowed {
+			t.Errorf("Attempt %d above limit should be rejected", i+1)
+		}
 	}
 
-	rl.cleanup()
-
-	if _, exists := rl.counters[sender]; exists {
-		t.Error("Sender with only old timestamps should be removed")
+	hourCount, _ := rl.GetCounts(ctx, sender)
+	if hourCount != 2 {
+		t.Errorf("Expected hourCount to stay at 2 after rejected attempts, got %d", hourCount)
 	}
 }
 
-func TestRateLimiter_SenderCount(t *testing.T) {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
+// TestRateLimiter_FailOpen verifies that Redis errors at runtime allow the message.
+func TestRateLimiter_FailOpen(t *testing.T) {
+	rl, mr := newTestRateLimiter(t)
+	ctx := context.Background()
+
+	mr.Close() // simulate Redis going down
+
+	allowed, hourCount, dayCount := rl.CheckAndIncrement(ctx, "fail@example.org", &Quota{PerHour: 1, PerDay: 1})
+	if !allowed {
+		t.Error("Expected fail-open: message should be allowed when Redis is unreachable")
 	}
-
-	quota := &Quota{PerHour: 100, PerDay: 100}
-
-	rl.CheckAndIncrement("user1@example.org", quota)
-	rl.CheckAndIncrement("user2@example.org", quota)
-	rl.CheckAndIncrement("user3@example.org", quota)
-
-	count := rl.SenderCount()
-	if count != 3 {
-		t.Errorf("Expected 3 tracked senders, got %d", count)
+	if hourCount != 0 || dayCount != 0 {
+		t.Errorf("Expected zero counts on fail-open, got hour=%d, day=%d", hourCount, dayCount)
 	}
 }

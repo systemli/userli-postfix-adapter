@@ -219,7 +219,7 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	}
 
 	// Check rate limit
-	allowed, hourCount, dayCount := p.rateLimiter.CheckAndIncrement(sender, quota)
+	allowed, hourCount, dayCount := p.rateLimiter.CheckAndIncrement(quotaCtx, sender, quota)
 
 	// Update metrics
 	quotaChecksTotal.WithLabelValues("checked").Inc()

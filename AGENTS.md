@@ -33,7 +33,7 @@ Only process at `protocol_state=END-OF-MESSAGE` for accurate counting.
 ## Pitfalls
 
 - `USERLI_TOKEN` is required — app exits immediately if missing
-- Rate limiter cleanup runs every 5 minutes in a background goroutine
+- `REDIS_URL` is required — rate-limit state lives in Redis (sliding-window sorted sets, key prefix `userli:ratelimit:sender:`, ~25h TTL); Redis errors fail open
 - Socketmap names must match exactly: `alias`, `domain`, `mailbox`, `senders`
 
 ## Docker Development

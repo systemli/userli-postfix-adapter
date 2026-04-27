@@ -78,9 +78,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 10, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -100,9 +98,7 @@ func TestPolicyServer_HandleRequest_NoSender(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 10, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -122,9 +118,7 @@ func TestPolicyServer_HandleRequest_APIError(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quotaErr: fmt.Errorf("API error"),
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -145,9 +139,7 @@ func TestPolicyServer_HandleRequest_NoLimits(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 0, PerDay: 0},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -167,9 +159,7 @@ func TestPolicyServer_HandleRequest_AllowedMessage(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 10, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -189,9 +179,7 @@ func TestPolicyServer_HandleRequest_RateLimited(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 2, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -222,9 +210,7 @@ func TestPolicyServer_HandleRequest_CustomRateLimitMessage(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 1, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Too many emails", zap.NewNop())
 
 	req := &PolicyRequest{
@@ -247,9 +233,7 @@ func TestPolicyServer_HandleRequest_UsesSaslUsername(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 1, PerDay: 100},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	// First request uses sasl_username
@@ -277,9 +261,7 @@ func TestPolicyServer_Integration(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 100, PerDay: 1000},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	// Start server on random port
@@ -339,9 +321,7 @@ func TestPolicyServer_HandleConnection(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 100, PerDay: 1000},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
@@ -389,9 +369,7 @@ func TestPolicyServer_HandleConnection_MultipleRequests(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 100, PerDay: 1000},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	serverConn, clientConn := net.Pipe()
@@ -434,9 +412,7 @@ func TestPolicyServer_StartPolicyServer(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 100, PerDay: 1000},
 	}
-	rateLimiter := &RateLimiter{
-		counters: make(map[string]*senderCounter),
-	}
+	rateLimiter, _ := newTestRateLimiter(t)
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())

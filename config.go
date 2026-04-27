@@ -27,6 +27,9 @@ type Config struct {
 
 	// RateLimitMessage is the message returned when rate limit is exceeded.
 	RateLimitMessage string
+
+	// RedisURL is the connection URL for Redis (used to persist rate-limit state).
+	RedisURL string
 }
 
 // NewConfig creates a new Config with default values.
@@ -63,6 +66,11 @@ func NewConfig() (*Config, error) {
 		rateLimitMessage = "Rate limit exceeded, please try again later"
 	}
 
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return nil, fmt.Errorf("REDIS_URL is required")
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -71,5 +79,6 @@ func NewConfig() (*Config, error) {
 		PolicyListenAddr:          policyListenAddr,
 		MetricsListenAddr:         metricsListenAddr,
 		RateLimitMessage:          rateLimitMessage,
+		RedisURL:                  redisURL,
 	}, nil
 }

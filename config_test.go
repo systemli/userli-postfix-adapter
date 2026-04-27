@@ -20,6 +20,7 @@ func (s *ConfigTestSuite) SetupTest() {
 func (s *ConfigTestSuite) TestNewConfig() {
 	s.Run("fail when userli token not set", func() {
 		os.Unsetenv("USERLI_TOKEN")
+		os.Unsetenv("REDIS_URL")
 
 		config, err := NewConfig()
 
@@ -28,8 +29,20 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Contains(err.Error(), "USERLI_TOKEN is required")
 	})
 
+	s.Run("fail when redis url not set", func() {
+		os.Setenv("USERLI_TOKEN", "token")
+		os.Unsetenv("REDIS_URL")
+
+		config, err := NewConfig()
+
+		s.Nil(config)
+		s.Error(err)
+		s.Contains(err.Error(), "REDIS_URL is required")
+	})
+
 	s.Run("default config", func() {
 		os.Setenv("USERLI_TOKEN", "token")
+		os.Setenv("REDIS_URL", "redis://localhost:6379/0")
 
 		config, err := NewConfig()
 
@@ -40,6 +53,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":10001", config.SocketmapListenAddr)
 		s.Equal(":10002", config.MetricsListenAddr)
 		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
+		s.Equal("redis://localhost:6379/0", config.RedisURL)
 	})
 
 	s.Run("custom config", func() {
@@ -49,6 +63,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		os.Setenv("SOCKETMAP_LISTEN_ADDR", ":20001")
 		os.Setenv("METRICS_LISTEN_ADDR", ":20002")
 		os.Setenv("RATE_LIMIT_MESSAGE", "Too many emails")
+		os.Setenv("REDIS_URL", "redis://redis:6379/1")
 
 		config, err := NewConfig()
 
@@ -59,6 +74,7 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":20001", config.SocketmapListenAddr)
 		s.Equal(":20002", config.MetricsListenAddr)
 		s.Equal("Too many emails", config.RateLimitMessage)
+		s.Equal("redis://redis:6379/1", config.RedisURL)
 	})
 }
 
