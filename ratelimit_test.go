@@ -10,6 +10,62 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestNewRateLimiter_Success(t *testing.T) {
+	mr := miniredis.RunT(t)
+	url := "redis://" + mr.Addr()
+
+	rl, err := NewRateLimiter(context.Background(), url, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewRateLimiter returned error: %v", err)
+	}
+	if rl == nil {
+		t.Fatal("NewRateLimiter returned nil limiter")
+	}
+	t.Cleanup(func() { _ = rl.Close() })
+
+	allowed, _, _ := rl.CheckAndIncrement(context.Background(), "smoke@example.org", &Quota{PerHour: 1, PerDay: 1})
+	if !allowed {
+		t.Error("Expected first message to be allowed against a fresh Redis")
+	}
+}
+
+func TestNewRateLimiter_InvalidURL(t *testing.T) {
+	rl, err := NewRateLimiter(context.Background(), "://not-a-url", zap.NewNop())
+	if err == nil {
+		t.Fatal("Expected error for malformed URL")
+	}
+	if rl != nil {
+		t.Errorf("Expected nil limiter on parse error, got %v", rl)
+	}
+}
+
+func TestNewRateLimiter_PingFailureFailsOpen(t *testing.T) {
+	// Point at an address that nothing is listening on so the PING fails fast.
+	// Constructor must still return a usable limiter (fail-open at startup).
+	// Tight dial timeout keeps the test fast despite go-redis pool retries.
+	url := "redis://127.0.0.1:1?dial_timeout=100ms"
+
+	rl, err := NewRateLimiter(context.Background(), url, zap.NewNop())
+	if err != nil {
+		t.Fatalf("Expected no error on PING failure, got %v", err)
+	}
+	if rl == nil {
+		t.Fatal("Expected non-nil limiter even when PING fails")
+	}
+	t.Cleanup(func() { _ = rl.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	allowed, hourCount, dayCount := rl.CheckAndIncrement(ctx, "ping@example.org", &Quota{PerHour: 1, PerDay: 1})
+	if !allowed {
+		t.Error("Expected fail-open when Redis is unreachable")
+	}
+	if hourCount != 0 || dayCount != 0 {
+		t.Errorf("Expected zero counts on fail-open, got hour=%d, day=%d", hourCount, dayCount)
+	}
+}
+
 func newTestRateLimiter(t *testing.T) (*RateLimiter, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
