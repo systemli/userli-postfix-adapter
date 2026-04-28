@@ -31,13 +31,14 @@ func (r *SocketmapResponse) String() string {
 // LookupServer handles Postfix socketmap protocol requests for lookups.
 // It implements the ConnectionHandler interface.
 type LookupServer struct {
-	client UserliService
-	logger *zap.Logger
+	client    UserliService
+	tlsPolicy *TLSPolicyHandler
+	logger    *zap.Logger
 }
 
-// NewLookupServer creates a new LookupServer with the given UserliService
-func NewLookupServer(client UserliService, logger *zap.Logger) *LookupServer {
-	return &LookupServer{client: client, logger: logger}
+// NewLookupServer creates a new LookupServer with the given UserliService and TLS policy handler.
+func NewLookupServer(client UserliService, tlsPolicy *TLSPolicyHandler, logger *zap.Logger) *LookupServer {
+	return &LookupServer{client: client, tlsPolicy: tlsPolicy, logger: logger}
 }
 
 // StartLookupServer starts the lookup server on the given address
@@ -111,8 +112,7 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// processRequest routes a socketmap request to the appropriate handler with a timeout context.
-// Using a separate method ensures defer cancel() runs after each request, preventing context leaks.
+// processRequest routes a socketmap request to the appropriate handler with a 5-second timeout.
 func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) *SocketmapResponse {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -126,10 +126,17 @@ func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) 
 		return s.handleMailbox(reqCtx, key)
 	case "senders":
 		return s.handleSenders(reqCtx, key)
+	case "tls_policy":
+		return s.handleTLSPolicy(reqCtx, key)
 	default:
 		s.logger.Error("Unknown map name", zap.String("map", mapName))
 		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 	}
+}
+
+// handleTLSPolicy processes smtp_tls_policy_maps requests.
+func (s *LookupServer) handleTLSPolicy(ctx context.Context, domain string) *SocketmapResponse {
+	return s.tlsPolicy.Lookup(ctx, domain)
 }
 
 // handleAlias processes alias lookup requests

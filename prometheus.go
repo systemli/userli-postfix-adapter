@@ -94,6 +94,23 @@ var (
 		Name: "userli_postfix_adapter_ratelimit_backend_errors_total",
 		Help: "Total number of rate-limit backend (Redis) errors, by operation",
 	}, []string{"operation"})
+
+	// TLS policy metrics
+	tlsPolicyCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_tls_policy_cache_hits_total",
+		Help: "Total number of TLS policy Redis cache hits",
+	}, []string{"result"})
+
+	tlsPolicyProbeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_tls_policy_probe_total",
+		Help: "Total number of outgoing SMTP STARTTLS probes, by result",
+	}, []string{"result"})
+
+	tlsPolicyProbeDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "userli_postfix_adapter_tls_policy_probe_duration_seconds",
+		Help:    "Duration of outgoing SMTP STARTTLS probes",
+		Buckets: prometheus.ExponentialBuckets(0.1, 2, 8), // 100ms to ~12.8s
+	})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
@@ -117,6 +134,9 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		quotaChecksTotal,
 		policyConnectionPoolFullTotal,
 		rateLimitBackendErrors,
+		tlsPolicyCacheHits,
+		tlsPolicyProbeTotal,
+		tlsPolicyProbeDuration,
 	)
 
 	mux := http.NewServeMux()

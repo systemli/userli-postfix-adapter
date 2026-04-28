@@ -34,7 +34,8 @@ Only process at `protocol_state=END-OF-MESSAGE` for accurate counting.
 
 - `USERLI_TOKEN` is required — app exits immediately if missing
 - `REDIS_URL` is required — rate-limit state lives in Redis (sliding-window sorted sets, key prefix `userli:ratelimit:sender:`, ~25h TTL); Redis errors fail open
-- Socketmap names must match exactly: `alias`, `domain`, `mailbox`, `senders`
+- TLS policy cache lives in Redis under key prefix `userli:tlspolicy:domain:`; TTL 7d for `encrypt`, 1d for `notls`; probe errors are not cached (retried on next request)
+- Socketmap names must match exactly: `alias`, `domain`, `mailbox`, `senders`, `tls_policy`
 
 ## Docker Development
 
