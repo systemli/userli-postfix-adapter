@@ -52,13 +52,13 @@ func TestRateLimiter_CheckAndIncrement_HourlyLimit(t *testing.T) {
 		}
 	}
 
-	// 4th message should be rejected
+	// 4th message should be rejected but still counted
 	allowed, hourCount, _ := rl.CheckAndIncrement(sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to hourly limit")
 	}
-	if hourCount != 3 {
-		t.Errorf("Expected hourCount to be 3, got %d", hourCount)
+	if hourCount != 4 {
+		t.Errorf("Expected hourCount to be 4, got %d", hourCount)
 	}
 }
 
@@ -78,13 +78,13 @@ func TestRateLimiter_CheckAndIncrement_DailyLimit(t *testing.T) {
 		}
 	}
 
-	// 4th message should be rejected
+	// 4th message should be rejected but still counted
 	allowed, _, dayCount := rl.CheckAndIncrement(sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to daily limit")
 	}
-	if dayCount != 3 {
-		t.Errorf("Expected dayCount to be 3, got %d", dayCount)
+	if dayCount != 4 {
+		t.Errorf("Expected dayCount to be 4, got %d", dayCount)
 	}
 }
 
@@ -111,6 +111,42 @@ func TestRateLimiter_CheckAndIncrement_MultipleSenders(t *testing.T) {
 	allowed2, _, _ := rl.CheckAndIncrement(sender2, quota)
 	if allowed1 || allowed2 {
 		t.Error("3rd message should be rejected for both senders")
+	}
+}
+
+func TestRateLimiter_CheckAndIncrement_RejectedRequestsExtendWindow(t *testing.T) {
+	rl := &RateLimiter{
+		counters: make(map[string]*senderCounter),
+	}
+
+	quota := &Quota{PerHour: 2, PerDay: 100}
+	sender := "spammer@example.org"
+
+	// Use up the hourly quota
+	for i := 0; i < 2; i++ {
+		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
+		if !allowed {
+			t.Errorf("Message %d should be allowed", i+1)
+		}
+	}
+
+	// Simulate continued spam attempts while over limit.
+	// Each rejected request should still be recorded so the sender
+	// cannot simply wait for the oldest timestamps to expire.
+	for i := 0; i < 5; i++ {
+		allowed, _, _ := rl.CheckAndIncrement(sender, quota)
+		if allowed {
+			t.Errorf("Spam attempt %d should be rejected", i+1)
+		}
+	}
+
+	// Verify that rejected attempts were counted
+	hourCount, dayCount := rl.GetCounts(sender)
+	if hourCount != 7 {
+		t.Errorf("Expected hourCount to include rejected attempts (7), got %d", hourCount)
+	}
+	if dayCount != 7 {
+		t.Errorf("Expected dayCount to include rejected attempts (7), got %d", dayCount)
 	}
 }
 
