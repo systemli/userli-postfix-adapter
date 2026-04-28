@@ -16,12 +16,24 @@ import (
 type TLSProber struct {
 	timeout      time.Duration
 	ehloHostname string
-	logger       *zap.Logger
+	// smtpPort is the port used for outgoing SMTP probes. Defaults to "25".
+	// Overridable in tests to avoid requiring a real port 25.
+	smtpPort string
+	// mxLookup resolves MX records. Defaults to net.LookupMX.
+	// Overridable in tests to avoid real DNS queries.
+	mxLookup func(string) ([]*net.MX, error)
+	logger   *zap.Logger
 }
 
 // NewTLSProber creates a new TLSProber.
 func NewTLSProber(timeout time.Duration, ehloHostname string, logger *zap.Logger) *TLSProber {
-	return &TLSProber{timeout: timeout, ehloHostname: ehloHostname, logger: logger}
+	return &TLSProber{
+		timeout:      timeout,
+		ehloHostname: ehloHostname,
+		smtpPort:     "25",
+		mxLookup:     net.LookupMX,
+		logger:       logger,
+	}
 }
 
 // Probe returns true when at least one MX server for domain advertises STARTTLS.
@@ -62,7 +74,7 @@ func (p *TLSProber) Probe(ctx context.Context, domain string) (bool, error) {
 // resolveMXHosts returns up to 2 MX hostnames for domain sorted by preference.
 // Falls back to the domain name itself when no MX records are found.
 func (p *TLSProber) resolveMXHosts(domain string) ([]string, error) {
-	records, err := net.LookupMX(domain)
+	records, err := p.mxLookup(domain)
 	if err != nil {
 		if dnsErr, ok := err.(*net.DNSError); ok && dnsErr.IsNotFound {
 			return []string{domain}, nil
@@ -80,9 +92,9 @@ func (p *TLSProber) resolveMXHosts(domain string) ([]string, error) {
 	return hosts, nil
 }
 
-// probeHost opens a plain TCP connection to host:25 and checks for STARTTLS.
+// probeHost opens a plain TCP connection to host:smtpPort and checks for STARTTLS.
 func (p *TLSProber) probeHost(ctx context.Context, host string) (bool, error) {
-	return p.probeAddr(ctx, net.JoinHostPort(host, "25"))
+	return p.probeAddr(ctx, net.JoinHostPort(host, p.smtpPort))
 }
 
 // probeAddr opens a TCP connection to addr, reads the SMTP banner, sends EHLO,

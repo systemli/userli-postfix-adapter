@@ -14,12 +14,16 @@ const tlsPolicyKeyPrefix = "userli:tlspolicy:domain:"
 const tlsPolicyCacheEncrypt = "encrypt"
 const tlsPolicyCacheNoTLS = "notls"
 
+type tlsProber interface {
+	Probe(ctx context.Context, domain string) (bool, error)
+}
+
 // TLSPolicyHandler implements the smtp_tls_policy_maps socketmap.
 // It checks Redis for a cached result first; on a miss it probes the domain's
 // MX servers via SMTP and caches the outcome.
 type TLSPolicyHandler struct {
 	redis    *redis.Client
-	prober   *TLSProber
+	prober   tlsProber
 	ttlTLS   time.Duration
 	ttlNoTLS time.Duration
 	logger   *zap.Logger
@@ -28,7 +32,7 @@ type TLSPolicyHandler struct {
 // NewTLSPolicyHandler creates a TLSPolicyHandler. It opens a dedicated Redis
 // connection (separate pool from the rate-limiter). A failed initial ping is
 // logged but does not prevent startup.
-func NewTLSPolicyHandler(ctx context.Context, url string, prober *TLSProber, cfg *Config, logger *zap.Logger) (*TLSPolicyHandler, error) {
+func NewTLSPolicyHandler(ctx context.Context, url string, prober tlsProber, cfg *Config, logger *zap.Logger) (*TLSPolicyHandler, error) {
 	opts, err := redis.ParseURL(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
