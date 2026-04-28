@@ -36,21 +36,9 @@ type LookupServer struct {
 	logger    *zap.Logger
 }
 
-// LookupOption configures a LookupServer.
-type LookupOption func(*LookupServer)
-
-// WithTLSPolicy enables the tls_policy socketmap handler.
-func WithTLSPolicy(h *TLSPolicyHandler) LookupOption {
-	return func(s *LookupServer) { s.tlsPolicy = h }
-}
-
-// NewLookupServer creates a new LookupServer with the given UserliService.
-func NewLookupServer(client UserliService, logger *zap.Logger, opts ...LookupOption) *LookupServer {
-	s := &LookupServer{client: client, logger: logger}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
+// NewLookupServer creates a new LookupServer with the given UserliService and TLS policy handler.
+func NewLookupServer(client UserliService, tlsPolicy *TLSPolicyHandler, logger *zap.Logger) *LookupServer {
+	return &LookupServer{client: client, tlsPolicy: tlsPolicy, logger: logger}
 }
 
 // StartLookupServer starts the lookup server on the given address
@@ -148,10 +136,6 @@ func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) 
 
 // handleTLSPolicy processes smtp_tls_policy_maps requests.
 func (s *LookupServer) handleTLSPolicy(ctx context.Context, domain string) *SocketmapResponse {
-	if s.tlsPolicy == nil {
-		s.logger.Error("tls_policy map requested but TLS_POLICY_ENABLED is false")
-		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
-	}
 	return s.tlsPolicy.Lookup(ctx, domain)
 }
 

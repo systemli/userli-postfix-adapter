@@ -9,12 +9,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/markdingo/netstring"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"go.uber.org/zap"
 )
+
+func newLookupTestTLSPolicy(t *testing.T) *TLSPolicyHandler {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return &TLSPolicyHandler{
+		redis:    client,
+		prober:   NewTLSProber(time.Second, "test.local", zap.NewNop()),
+		ttlTLS:   time.Hour,
+		ttlNoTLS: time.Hour,
+		logger:   zap.NewNop(),
+	}
+}
 
 type ServerTestSuite struct {
 	suite.Suite
@@ -49,7 +65,7 @@ func (s *ServerTestSuite) TearDownTest() {
 // TestStartLookupServer_BasicFunctionality tests basic server startup and shutdown
 func (s *ServerTestSuite) TestStartLookupServer_BasicFunctionality() {
 	mock := &MockUserliService{}
-	server := NewLookupServer(mock, zap.NewNop())
+	server := NewLookupServer(mock, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -84,7 +100,7 @@ func (s *ServerTestSuite) TestStartLookupServer_BasicFunctionality() {
 // TestStartLookupServer_InvalidAddress tests server behavior with invalid address
 func (s *ServerTestSuite) TestStartLookupServer_InvalidAddress() {
 	mock := &MockUserliService{}
-	server := NewLookupServer(mock, zap.NewNop())
+	server := NewLookupServer(mock, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -116,7 +132,7 @@ func (s *ServerTestSuite) TestStartLookupServer_ConnectionHandling() {
 	mockService := &MockUserliService{}
 	// Mock a successful domain lookup
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -155,7 +171,7 @@ func (s *ServerTestSuite) TestStartLookupServer_ConnectionHandling() {
 // TestStartLookupServer_GracefulShutdown tests graceful shutdown with active connections
 func (s *ServerTestSuite) TestStartLookupServer_GracefulShutdown() {
 	mockService := &MockUserliService{}
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -207,7 +223,7 @@ func (s *ServerTestSuite) TestStartLookupServer_GracefulShutdown() {
 func (s *ServerTestSuite) TestHandleLookupConnection() {
 	mockService := &MockUserliService{}
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	// Create a pipe to simulate a connection
 	serverConn, client := net.Pipe()
@@ -233,7 +249,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection() {
 // TestStartLookupServer_ConnectionPoolLimit tests connection pool limits
 func (s *ServerTestSuite) TestStartLookupServer_ConnectionPoolLimit() {
 	mockService := &MockUserliService{}
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -280,7 +296,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_MultipleRequests() {
 	mockService := &MockUserliService{}
 	mockService.On("GetDomain", mock.Anything, "example.com").Return(true, nil)
 	mockService.On("GetDomain", mock.Anything, "example.org").Return(false, nil)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -318,7 +334,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_AliasLookup() {
 	mockService.On("GetAliases", mock.Anything, "alias@example.com").Return([]string{"user1@example.com", "user2@example.com"}, nil)
 	mockService.On("GetAliases", mock.Anything, "unknown@example.com").Return([]string{}, nil)
 	mockService.On("GetAliases", mock.Anything, "error@example.com").Return([]string(nil), io.ErrUnexpectedEOF)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -356,7 +372,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_MailboxLookup() {
 	mockService.On("GetMailbox", mock.Anything, "user@example.com").Return(true, nil)
 	mockService.On("GetMailbox", mock.Anything, "unknown@example.com").Return(false, nil)
 	mockService.On("GetMailbox", mock.Anything, "error@example.com").Return(false, io.ErrUnexpectedEOF)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -394,7 +410,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_SendersLookup() {
 	mockService.On("GetSenders", mock.Anything, "user@example.com").Return([]string{"alias1@example.com", "alias2@example.com"}, nil)
 	mockService.On("GetSenders", mock.Anything, "unknown@example.com").Return([]string{}, nil)
 	mockService.On("GetSenders", mock.Anything, "error@example.com").Return([]string(nil), io.ErrUnexpectedEOF)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -430,7 +446,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_SendersLookup() {
 func (s *ServerTestSuite) TestHandleLookupConnection_DomainError() {
 	mockService := &MockUserliService{}
 	mockService.On("GetDomain", mock.Anything, "error.com").Return(false, io.ErrUnexpectedEOF)
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -450,7 +466,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_DomainError() {
 // TestHandleLookupConnection_UnknownMap tests unknown map name handling
 func (s *ServerTestSuite) TestHandleLookupConnection_UnknownMap() {
 	mockService := &MockUserliService{}
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -469,7 +485,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_UnknownMap() {
 // TestHandleLookupConnection_InvalidFormat tests invalid request format
 func (s *ServerTestSuite) TestHandleLookupConnection_InvalidFormat() {
 	mockService := &MockUserliService{}
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 	defer serverConn.Close()
@@ -489,7 +505,7 @@ func (s *ServerTestSuite) TestHandleLookupConnection_InvalidFormat() {
 // TestHandleLookupConnection_ContextCancelled tests context cancellation
 func (s *ServerTestSuite) TestHandleLookupConnection_ContextCancelled() {
 	mockService := &MockUserliService{}
-	server := NewLookupServer(mockService, zap.NewNop())
+	server := NewLookupServer(mockService, newLookupTestTLSPolicy(s.T()), zap.NewNop())
 
 	serverConn, client := net.Pipe()
 

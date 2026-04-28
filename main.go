@@ -60,7 +60,7 @@ func main() {
 	}
 	defer func() { _ = tlsPolicy.Close() }()
 
-	lookupServer := NewLookupServer(userli, logger.Named("lookup"), WithTLSPolicy(tlsPolicy))
+	lookupServer := NewLookupServer(userli, tlsPolicy, logger.Named("lookup"))
 	policyServer := NewPolicyServer(userli, rateLimiter, config.RateLimitMessage, logger.Named("policy"))
 
 	var wg sync.WaitGroup
