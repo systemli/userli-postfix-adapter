@@ -122,12 +122,13 @@ func TestRateLimiter_CheckAndIncrement_HourlyLimit(t *testing.T) {
 		}
 	}
 
+	// 4th message should be rejected but still counted
 	allowed, hourCount, _ := rl.CheckAndIncrement(ctx, sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to hourly limit")
 	}
-	if hourCount != 3 {
-		t.Errorf("Expected hourCount to be 3, got %d", hourCount)
+	if hourCount != 4 {
+		t.Errorf("Expected hourCount to be 4, got %d", hourCount)
 	}
 }
 
@@ -145,12 +146,13 @@ func TestRateLimiter_CheckAndIncrement_DailyLimit(t *testing.T) {
 		}
 	}
 
+	// 4th message should be rejected but still counted
 	allowed, _, dayCount := rl.CheckAndIncrement(ctx, sender, quota)
 	if allowed {
 		t.Error("4th message should be rejected due to daily limit")
 	}
-	if dayCount != 3 {
-		t.Errorf("Expected dayCount to be 3, got %d", dayCount)
+	if dayCount != 4 {
+		t.Errorf("Expected dayCount to be 4, got %d", dayCount)
 	}
 }
 
@@ -228,29 +230,39 @@ func TestRateLimiter_KeyTTL(t *testing.T) {
 	}
 }
 
-// TestRateLimiter_RejectedDoesNotIncrement guards the conditional-ZADD invariant
-// in the Lua script: a rejected message must not push the counter above the limit.
-func TestRateLimiter_RejectedDoesNotIncrement(t *testing.T) {
+// TestRateLimiter_CheckAndIncrement_RejectedRequestsExtendWindow ensures
+// rejected attempts are still recorded so a sender who keeps trying while
+// over-limit extends their own blocking window instead of getting a free
+// reset once old timestamps expire.
+func TestRateLimiter_CheckAndIncrement_RejectedRequestsExtendWindow(t *testing.T) {
 	rl, _ := newTestRateLimiter(t)
 	ctx := context.Background()
 
 	quota := &Quota{PerHour: 2, PerDay: 100}
-	sender := "reject@example.org"
+	sender := "spammer@example.org"
 
+	// Use up the hourly quota.
 	for i := 0; i < 2; i++ {
-		rl.CheckAndIncrement(ctx, sender, quota)
-	}
-
-	for i := 0; i < 5; i++ {
 		allowed, _, _ := rl.CheckAndIncrement(ctx, sender, quota)
-		if allowed {
-			t.Errorf("Attempt %d above limit should be rejected", i+1)
+		if !allowed {
+			t.Errorf("Message %d should be allowed", i+1)
 		}
 	}
 
-	hourCount, _ := rl.GetCounts(ctx, sender)
-	if hourCount != 2 {
-		t.Errorf("Expected hourCount to stay at 2 after rejected attempts, got %d", hourCount)
+	// Continued spam attempts must be rejected and still counted.
+	for i := 0; i < 5; i++ {
+		allowed, _, _ := rl.CheckAndIncrement(ctx, sender, quota)
+		if allowed {
+			t.Errorf("Spam attempt %d should be rejected", i+1)
+		}
+	}
+
+	hourCount, dayCount := rl.GetCounts(ctx, sender)
+	if hourCount != 7 {
+		t.Errorf("Expected hourCount to include rejected attempts (7), got %d", hourCount)
+	}
+	if dayCount != 7 {
+		t.Errorf("Expected dayCount to include rejected attempts (7), got %d", dayCount)
 	}
 }
 

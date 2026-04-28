@@ -20,7 +20,13 @@ const rateLimitKeyPrefix = "userli:ratelimit:sender:"
 
 // rateLimitScript implements the sliding-window check atomically.
 // ARGV: hourLimit, dayLimit, now (unix nano), hourAgo, dayAgo, member suffix, TTL seconds.
-// Returns {allowed (1/0), hourCount, dayCount}. The new entry is only added when allowed.
+// Returns {allowed (1/0), hourCount, dayCount}.
+//
+// The current request is always recorded — even when it gets rejected — so a
+// sender who keeps trying while over-limit extends their own blocking window
+// instead of getting a free reset once old timestamps expire. The reported
+// counts therefore include the just-recorded attempt; the limit comparison
+// uses '>' rather than '>='.
 const rateLimitScript = `
 local key = KEYS[1]
 local hour_limit = tonumber(ARGV[1])
@@ -33,20 +39,20 @@ local ttl = tonumber(ARGV[7])
 
 redis.call("ZREMRANGEBYSCORE", key, "-inf", "(" .. day_ago)
 
-local day_count = tonumber(redis.call("ZCARD", key))
-local hour_count = tonumber(redis.call("ZCOUNT", key, "(" .. hour_ago, "+inf"))
-
-if hour_limit > 0 and hour_count >= hour_limit then
-    return {0, hour_count, day_count}
-end
-if day_limit > 0 and day_count >= day_limit then
-    return {0, hour_count, day_count}
-end
-
 redis.call("ZADD", key, now, now .. ":" .. suffix)
 redis.call("EXPIRE", key, ttl)
 
-return {1, hour_count + 1, day_count + 1}
+local day_count = tonumber(redis.call("ZCARD", key))
+local hour_count = tonumber(redis.call("ZCOUNT", key, "(" .. hour_ago, "+inf"))
+
+if hour_limit > 0 and hour_count > hour_limit then
+    return {0, hour_count, day_count}
+end
+if day_limit > 0 and day_count > day_limit then
+    return {0, hour_count, day_count}
+end
+
+return {1, hour_count, day_count}
 `
 
 // RateLimiter enforces per-sender sliding-window quotas using Redis as backing store.
