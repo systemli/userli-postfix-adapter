@@ -137,7 +137,7 @@ func NewUserli(token, baseURL string, opts ...Option) *Userli {
 func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		logger.Info("unable to process the alias", zap.String("email", email), zap.Error(err))
+		logger.Debug("unable to process the alias", zap.String("email", email), zap.Error(err))
 		return []string{}, nil
 	}
 
@@ -159,7 +159,7 @@ func (u *Userli) GetAliases(ctx context.Context, email string) ([]string, error)
 func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 	resp, err := u.call(ctx, fmt.Sprintf("%s/api/postfix/domain/%s", u.baseURL, domain))
 	if err != nil {
-		logger.Info("unable to process the domain", zap.String("domain", domain), zap.Error(err))
+		logger.Debug("unable to process the domain", zap.String("domain", domain), zap.Error(err))
 		return false, err
 	}
 	defer resp.Body.Close()
@@ -176,7 +176,7 @@ func (u *Userli) GetDomain(ctx context.Context, domain string) (bool, error) {
 func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		logger.Info("unable to process the mailbox", zap.String("email", email), zap.Error(err))
+		logger.Debug("unable to process the mailbox", zap.String("email", email), zap.Error(err))
 		return false, nil
 	}
 
@@ -198,7 +198,7 @@ func (u *Userli) GetMailbox(ctx context.Context, email string) (bool, error) {
 func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		logger.Info("unable to process the senders", zap.String("email", email), zap.Error(err))
+		logger.Debug("unable to process the senders", zap.String("email", email), zap.Error(err))
 		return []string{}, nil
 	}
 
@@ -220,7 +220,7 @@ func (u *Userli) GetSenders(ctx context.Context, email string) ([]string, error)
 func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
-		logger.Info("unable to process the quota", zap.String("email", email), zap.Error(err))
+		logger.Debug("unable to process the quota", zap.String("email", email), zap.Error(err))
 		return nil, err
 	}
 
