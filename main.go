@@ -47,7 +47,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	rateLimiter := NewRateLimiter(ctx)
+	rateLimiter, err := NewRateLimiter(ctx, config.RedisURL, logger.Named("ratelimit"))
+	if err != nil {
+		logger.Fatal("Failed to initialize rate limiter", zap.Error(err))
+	}
+	defer func() { _ = rateLimiter.Close() }()
 	policyServer := NewPolicyServer(userli, rateLimiter, config.RateLimitMessage, logger.Named("policy"))
 
 	var wg sync.WaitGroup
@@ -55,7 +59,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		StartMetricsServer(ctx, config.MetricsListenAddr, userli, rateLimiter)
+		StartMetricsServer(ctx, config.MetricsListenAddr, userli)
 	}()
 
 	wg.Add(1)

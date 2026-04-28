@@ -2,179 +2,173 @@ package main
 
 import (
 	"context"
-	"sync"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
-// RateLimiter tracks sending rates per sender using a sliding window approach.
-// It stores timestamps of sent messages and counts them within time windows.
+// rateLimitTTL is set slightly above 24h so a quiet sender's key naturally
+// evicts but no still-relevant timestamp is dropped early.
+const rateLimitTTL = 25 * time.Hour
+
+// rateLimitKeyPrefix is the static Redis key prefix for rate-limit sorted sets.
+const rateLimitKeyPrefix = "userli:ratelimit:sender:"
+
+// rateLimitScript implements the sliding-window check atomically.
+// ARGV: hourLimit, dayLimit, now (unix nano), hourAgo, dayAgo, member suffix, TTL seconds.
+// Returns {allowed (1/0), hourCount, dayCount}.
+//
+// The current request is always recorded — even when it gets rejected — so a
+// sender who keeps trying while over-limit extends their own blocking window
+// instead of getting a free reset once old timestamps expire. The reported
+// counts therefore include the just-recorded attempt; the limit comparison
+// uses '>' rather than '>='.
+const rateLimitScript = `
+local key = KEYS[1]
+local hour_limit = tonumber(ARGV[1])
+local day_limit = tonumber(ARGV[2])
+local now = ARGV[3]
+local hour_ago = ARGV[4]
+local day_ago = ARGV[5]
+local suffix = ARGV[6]
+local ttl = tonumber(ARGV[7])
+
+redis.call("ZREMRANGEBYSCORE", key, "-inf", "(" .. day_ago)
+
+redis.call("ZADD", key, now, now .. ":" .. suffix)
+redis.call("EXPIRE", key, ttl)
+
+local day_count = tonumber(redis.call("ZCARD", key))
+local hour_count = tonumber(redis.call("ZCOUNT", key, "(" .. hour_ago, "+inf"))
+
+if hour_limit > 0 and hour_count > hour_limit then
+    return {0, hour_count, day_count}
+end
+if day_limit > 0 and day_count > day_limit then
+    return {0, hour_count, day_count}
+end
+
+return {1, hour_count, day_count}
+`
+
+// RateLimiter enforces per-sender sliding-window quotas using Redis as backing store.
+// State persists across restarts; Redis errors fail open (the message is allowed).
 type RateLimiter struct {
-	mu       sync.RWMutex
-	counters map[string]*senderCounter
+	client *redis.Client
+	script *redis.Script
+	logger *zap.Logger
 }
 
-// senderCounter tracks message timestamps for a single sender
-type senderCounter struct {
-	timestamps []time.Time
-	mu         sync.Mutex
-}
-
-// NewRateLimiter creates a new RateLimiter instance
-func NewRateLimiter(ctx context.Context) *RateLimiter {
-	rl := &RateLimiter{
-		counters: make(map[string]*senderCounter),
+// NewRateLimiter parses the Redis URL, opens a client and pings the server.
+// A failed ping is logged as a warning but does not abort startup (fail-open).
+func NewRateLimiter(ctx context.Context, url string, logger *zap.Logger) (*RateLimiter, error) {
+	opts, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
 
-	// Start background cleanup goroutine
-	go rl.cleanupLoop(ctx)
+	client := redis.NewClient(opts)
 
-	return rl
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		logger.Warn("Redis ping failed at startup, continuing fail-open",
+			zap.String("addr", opts.Addr), zap.Error(err))
+	} else {
+		logger.Info("Connected to Redis", zap.String("addr", opts.Addr))
+	}
+
+	return &RateLimiter{
+		client: client,
+		script: redis.NewScript(rateLimitScript),
+		logger: logger,
+	}, nil
 }
 
-// CheckAndIncrement checks if the sender is within quota limits and increments the counter if allowed.
-// Returns true if the message should be allowed, false if rate limited.
-// If quota limits are 0, they are treated as unlimited.
-func (rl *RateLimiter) CheckAndIncrement(sender string, quota *Quota) (allowed bool, hourCount, dayCount int) {
+// CheckAndIncrement runs the sliding-window check atomically in Redis.
+// Returns allowed=true with zero counts when quota is nil (no limits configured).
+// Redis errors return allowed=true (fail-open) and increment the backend-error counter.
+func (rl *RateLimiter) CheckAndIncrement(ctx context.Context, sender string, quota *Quota) (allowed bool, hourCount, dayCount int) {
 	if quota == nil {
 		return true, 0, 0
 	}
 
-	// Get or create counter for this sender
-	rl.mu.Lock()
-	counter, exists := rl.counters[sender]
-	if !exists {
-		counter = &senderCounter{
-			timestamps: make([]time.Time, 0),
-		}
-		rl.counters[sender] = counter
-	}
-	rl.mu.Unlock()
+	now := time.Now().UnixNano()
+	hourAgo := now - int64(time.Hour)
+	dayAgo := now - int64(24*time.Hour)
 
-	counter.mu.Lock()
-	defer counter.mu.Unlock()
-
-	now := time.Now()
-	hourAgo := now.Add(-time.Hour)
-	dayAgo := now.Add(-24 * time.Hour)
-
-	// Clean old timestamps and count current usage
-	validTimestamps := make([]time.Time, 0, len(counter.timestamps))
-	hourCount = 0
-	dayCount = 0
-
-	for _, ts := range counter.timestamps {
-		if ts.After(dayAgo) {
-			validTimestamps = append(validTimestamps, ts)
-			dayCount++
-			if ts.After(hourAgo) {
-				hourCount++
-			}
-		}
+	suffix, err := randomSuffix()
+	if err != nil {
+		rl.logger.Warn("Failed to generate suffix, allowing message", zap.Error(err))
+		rateLimitBackendErrors.WithLabelValues("check").Inc()
+		return true, 0, 0
 	}
 
-	counter.timestamps = validTimestamps
-
-	// Always record the current request (even if rejected) so that
-	// senders who keep trying while over-limit extend their own window
-	// instead of getting a free reset once old timestamps expire.
-	counter.timestamps = append(counter.timestamps, now)
-	hourCount++
-	dayCount++
-
-	// Check limits (0 means unlimited)
-	if quota.PerHour > 0 && hourCount > quota.PerHour {
-		return false, hourCount, dayCount
-	}
-	if quota.PerDay > 0 && dayCount > quota.PerDay {
-		return false, hourCount, dayCount
+	res, err := rl.script.Run(ctx, rl.client,
+		[]string{keyFor(sender)},
+		quota.PerHour, quota.PerDay,
+		now, hourAgo, dayAgo,
+		suffix, int64(rateLimitTTL.Seconds()),
+	).Result()
+	if err != nil {
+		rl.logger.Warn("Rate limit check failed, allowing message", zap.Error(err))
+		rateLimitBackendErrors.WithLabelValues("check").Inc()
+		return true, 0, 0
 	}
 
-	return true, hourCount, dayCount
+	values, ok := res.([]any)
+	if !ok || len(values) != 3 {
+		rl.logger.Warn("Unexpected script result, allowing message")
+		rateLimitBackendErrors.WithLabelValues("check").Inc()
+		return true, 0, 0
+	}
+
+	allowedRaw, _ := values[0].(int64)
+	hourRaw, _ := values[1].(int64)
+	dayRaw, _ := values[2].(int64)
+
+	return allowedRaw == 1, int(hourRaw), int(dayRaw)
 }
 
-// GetCounts returns the current hour and day counts for a sender without incrementing
-func (rl *RateLimiter) GetCounts(sender string) (hourCount, dayCount int) {
-	rl.mu.RLock()
-	counter, exists := rl.counters[sender]
-	rl.mu.RUnlock()
+// GetCounts returns the current hour and day counts for a sender without incrementing.
+// Redis errors return (0, 0) and increment the backend-error counter.
+func (rl *RateLimiter) GetCounts(ctx context.Context, sender string) (hourCount, dayCount int) {
+	key := keyFor(sender)
+	now := time.Now().UnixNano()
+	hourAgo := fmt.Sprintf("(%d", now-int64(time.Hour))
+	dayAgo := fmt.Sprintf("(%d", now-int64(24*time.Hour))
 
-	if !exists {
+	pipe := rl.client.Pipeline()
+	pipe.ZRemRangeByScore(ctx, key, "-inf", dayAgo)
+	dayCmd := pipe.ZCard(ctx, key)
+	hourCmd := pipe.ZCount(ctx, key, hourAgo, "+inf")
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		rl.logger.Warn("GetCounts redis error", zap.String("sender", sender), zap.Error(err))
+		rateLimitBackendErrors.WithLabelValues("get_counts").Inc()
 		return 0, 0
 	}
 
-	counter.mu.Lock()
-	defer counter.mu.Unlock()
-
-	now := time.Now()
-	hourAgo := now.Add(-time.Hour)
-	dayAgo := now.Add(-24 * time.Hour)
-
-	for _, ts := range counter.timestamps {
-		if ts.After(dayAgo) {
-			dayCount++
-			if ts.After(hourAgo) {
-				hourCount++
-			}
-		}
-	}
-
-	return hourCount, dayCount
+	return int(hourCmd.Val()), int(dayCmd.Val())
 }
 
-// cleanupLoop periodically removes old entries to prevent memory leaks
-func (rl *RateLimiter) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			rl.cleanup()
-		}
-	}
+// Close shuts down the Redis client.
+func (rl *RateLimiter) Close() error {
+	return rl.client.Close()
 }
 
-// cleanup removes entries older than 24 hours
-func (rl *RateLimiter) cleanup() {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	dayAgo := time.Now().Add(-24 * time.Hour)
-
-	// Collect senders to delete after iteration
-	var toDelete []string
-
-	for sender, counter := range rl.counters {
-		counter.mu.Lock()
-
-		// Remove old timestamps
-		validTimestamps := make([]time.Time, 0, len(counter.timestamps))
-		for _, ts := range counter.timestamps {
-			if ts.After(dayAgo) {
-				validTimestamps = append(validTimestamps, ts)
-			}
-		}
-		counter.timestamps = validTimestamps
-
-		// Mark sender for deletion if no recent activity
-		if len(counter.timestamps) == 0 {
-			toDelete = append(toDelete, sender)
-		}
-
-		counter.mu.Unlock()
-	}
-
-	// Delete after iteration to avoid modifying map during range
-	for _, sender := range toDelete {
-		delete(rl.counters, sender)
-	}
+func keyFor(sender string) string {
+	return rateLimitKeyPrefix + sender
 }
 
-// SenderCount returns the number of tracked senders (for metrics)
-func (rl *RateLimiter) SenderCount() int {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-	return len(rl.counters)
+func randomSuffix() (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }

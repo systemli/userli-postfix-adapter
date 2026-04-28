@@ -16,6 +16,7 @@ The adapter is configured via environment variables:
 - `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 - `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
+- `REDIS_URL`: Connection URL for Redis (required). Format follows [`redis.ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL), e.g. `redis://[user:password@]host:port/db`. Rate-limit state is stored in Redis so it survives restarts.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
 
@@ -47,6 +48,8 @@ The Userli API endpoint `/api/postfix/smtp_quota/{email}` returns:
 ```
 
 Where `0` means unlimited. If the API is unreachable, messages are allowed (fail-open).
+
+Rate-limit state is persisted to Redis (`REDIS_URL`) so it survives restarts. If Redis is unreachable, messages are also allowed (fail-open) and the `userli_postfix_adapter_ratelimit_backend_errors_total` counter is incremented.
 
 ## Docker
 
@@ -172,7 +175,7 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 - `userli_postfix_adapter_policy_request_duration_seconds` - Policy request duration histogram
 - `userli_postfix_adapter_quota_exceeded_total` - Total messages rejected due to quota
 - `userli_postfix_adapter_quota_checks_total` - Total quota checks performed
-- `userli_postfix_adapter_tracked_senders` - Number of senders tracked by rate limiter
+- `userli_postfix_adapter_ratelimit_backend_errors_total` - Total Redis errors hit by the rate limiter, labelled by `operation`
 
 All metrics include relevant labels (handler, status, endpoint, etc.).
 

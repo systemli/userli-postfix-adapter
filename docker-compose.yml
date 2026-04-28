@@ -10,6 +10,20 @@ services:
       - "10003:10003"
     env_file:
       - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - userli
+
+  redis:
+    hostname: redis
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - userli
 
