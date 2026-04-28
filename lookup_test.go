@@ -531,6 +531,71 @@ func (s *ServerTestSuite) TestHandleLookupConnection_ContextCancelled() {
 	}
 }
 
+// TestHandleLookupConnection_TLSPolicy_CacheHit tests that a cached encrypt entry
+// is returned directly without probing.
+func (s *ServerTestSuite) TestHandleLookupConnection_TLSPolicy_CacheHit() {
+	mr := miniredis.RunT(s.T())
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s.T().Cleanup(func() { _ = client.Close() })
+
+	// Pre-populate cache so no probe is needed.
+	ctx := context.Background()
+	client.Set(ctx, tlsPolicyKeyPrefix+"cached.example.com", tlsPolicyCacheEncrypt, time.Hour)
+
+	tlsPolicy := &TLSPolicyHandler{
+		redis:    client,
+		prober:   NewTLSProber(time.Second, "test.local", zap.NewNop()),
+		ttlTLS:   time.Hour,
+		ttlNoTLS: time.Hour,
+		logger:   zap.NewNop(),
+	}
+	server := NewLookupServer(&MockUserliService{}, tlsPolicy, zap.NewNop())
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go server.HandleConnection(ctx, serverConn)
+
+	_, err := clientConn.Write(s.encodeNetstring("tls_policy cached.example.com"))
+	s.Require().NoError(err)
+	response, err := s.readNetstringResponse(clientConn)
+	s.Require().NoError(err)
+	s.Contains(response, "OK encrypt")
+}
+
+// TestHandleLookupConnection_TLSPolicy_NotFound tests that a cached notls entry
+// returns NOTFOUND.
+func (s *ServerTestSuite) TestHandleLookupConnection_TLSPolicy_NotFound() {
+	mr := miniredis.RunT(s.T())
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s.T().Cleanup(func() { _ = client.Close() })
+
+	ctx := context.Background()
+	client.Set(ctx, tlsPolicyKeyPrefix+"notls.example.com", tlsPolicyCacheNoTLS, time.Hour)
+
+	tlsPolicy := &TLSPolicyHandler{
+		redis:    client,
+		prober:   NewTLSProber(time.Second, "test.local", zap.NewNop()),
+		ttlTLS:   time.Hour,
+		ttlNoTLS: time.Hour,
+		logger:   zap.NewNop(),
+	}
+	server := NewLookupServer(&MockUserliService{}, tlsPolicy, zap.NewNop())
+
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go server.HandleConnection(ctx, serverConn)
+
+	_, err := clientConn.Write(s.encodeNetstring("tls_policy notls.example.com"))
+	s.Require().NoError(err)
+	response, err := s.readNetstringResponse(clientConn)
+	s.Require().NoError(err)
+	s.Contains(response, "NOTFOUND")
+}
+
 // TestSocketmapResponse_String tests the SocketmapResponse.String method
 func (s *ServerTestSuite) TestSocketmapResponse_String() {
 	// Test with data

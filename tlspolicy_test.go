@@ -193,6 +193,45 @@ func TestTLSPolicyHandler_RedisDown_FailOpen(t *testing.T) {
 	}
 }
 
+func TestNewTLSPolicyHandler_Success(t *testing.T) {
+	mr := miniredis.RunT(t)
+	prober := NewTLSProber(time.Second, "test.local", zap.NewNop())
+	cfg := &Config{TLSPolicyCacheTTLTLS: time.Hour, TLSPolicyCacheTTLNoTLS: time.Hour}
+
+	h, err := NewTLSPolicyHandler(context.Background(), "redis://"+mr.Addr(), prober, cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	if err := h.Close(); err != nil {
+		t.Errorf("unexpected error on Close: %v", err)
+	}
+}
+
+func TestNewTLSPolicyHandler_InvalidURL(t *testing.T) {
+	_, err := NewTLSPolicyHandler(context.Background(), "://invalid", nil, &Config{}, zap.NewNop())
+	if err == nil {
+		t.Error("expected error for invalid Redis URL")
+	}
+}
+
+func TestNewTLSPolicyHandler_PingFailure(t *testing.T) {
+	prober := NewTLSProber(time.Second, "test.local", zap.NewNop())
+	cfg := &Config{TLSPolicyCacheTTLTLS: time.Hour, TLSPolicyCacheTTLNoTLS: time.Hour}
+
+	// Nothing listening — ping fails, but handler is still created (fail-open).
+	h, err := NewTLSPolicyHandler(context.Background(), "redis://127.0.0.1:1?dial_timeout=100ms", prober, cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("expected no error on ping failure, got %v", err)
+	}
+	if h == nil {
+		t.Fatal("expected non-nil handler even when ping fails")
+	}
+	_ = h.Close()
+}
+
 // countingProber counts how many times Probe is called.
 type countingProber struct {
 	hasTLS bool

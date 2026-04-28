@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -54,6 +55,9 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":10002", config.MetricsListenAddr)
 		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
 		s.Equal("redis://localhost:6379/0", config.RedisURL)
+		s.Equal("localhost", config.TLSPolicyEhloHostname)
+		s.Equal(168*time.Hour, config.TLSPolicyCacheTTLTLS)
+		s.Equal(24*time.Hour, config.TLSPolicyCacheTTLNoTLS)
 	})
 
 	s.Run("custom config", func() {
@@ -64,6 +68,14 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		os.Setenv("METRICS_LISTEN_ADDR", ":20002")
 		os.Setenv("RATE_LIMIT_MESSAGE", "Too many emails")
 		os.Setenv("REDIS_URL", "redis://redis:6379/1")
+		os.Setenv("TLS_POLICY_EHLO_HOSTNAME", "mail.example.org")
+		os.Setenv("TLS_POLICY_CACHE_TTL_TLS", "48h")
+		os.Setenv("TLS_POLICY_CACHE_TTL_NOTLS", "12h")
+		defer func() {
+			os.Unsetenv("TLS_POLICY_EHLO_HOSTNAME")
+			os.Unsetenv("TLS_POLICY_CACHE_TTL_TLS")
+			os.Unsetenv("TLS_POLICY_CACHE_TTL_NOTLS")
+		}()
 
 		config, err := NewConfig()
 
@@ -75,6 +87,9 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":20002", config.MetricsListenAddr)
 		s.Equal("Too many emails", config.RateLimitMessage)
 		s.Equal("redis://redis:6379/1", config.RedisURL)
+		s.Equal("mail.example.org", config.TLSPolicyEhloHostname)
+		s.Equal(48*time.Hour, config.TLSPolicyCacheTTLTLS)
+		s.Equal(12*time.Hour, config.TLSPolicyCacheTTLNoTLS)
 	})
 }
 
