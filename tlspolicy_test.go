@@ -51,6 +51,35 @@ func newTestPolicyHandler(t *testing.T, prober tlsProber) (*TLSPolicyHandler, *m
 	}, mr
 }
 
+func TestTLSPolicyHandler_EmailInput_ExtractsDomain(t *testing.T) {
+	probeCount := 0
+	prober := &countingProber{hasTLS: true, count: &probeCount}
+	h, _ := newTestPolicyHandler(t, prober)
+
+	// Postfix sends a full address — should probe example.com, not the full address.
+	resp := h.Lookup(context.Background(), "user@example.com")
+	if resp.Status != "OK" || resp.Data != "encrypt" {
+		t.Errorf("expected OK encrypt, got %s %s", resp.Status, resp.Data)
+	}
+
+	// Second call with bare domain must hit the same cache entry.
+	resp2 := h.Lookup(context.Background(), "example.com")
+	if probeCount != 1 {
+		t.Errorf("expected cache hit (1 probe total), got %d", probeCount)
+	}
+	if resp2.Status != "OK" || resp2.Data != "encrypt" {
+		t.Errorf("expected OK encrypt from cache, got %s %s", resp2.Status, resp2.Data)
+	}
+}
+
+func TestTLSPolicyHandler_EmptyDomain_NotFound(t *testing.T) {
+	h, _ := newTestPolicyHandler(t, &mockProber{hasTLS: true})
+	resp := h.Lookup(context.Background(), "@")
+	if resp.Status != "NOTFOUND" {
+		t.Errorf("expected NOTFOUND for empty domain, got %s", resp.Status)
+	}
+}
+
 func TestTLSPolicyHandler_CacheMiss_HasTLS(t *testing.T) {
 	h, _ := newTestPolicyHandler(t, &mockProber{hasTLS: true})
 	resp := h.Lookup(context.Background(), "example.com")

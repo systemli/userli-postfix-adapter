@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -63,12 +64,21 @@ func (h *TLSPolicyHandler) Close() error {
 
 // Lookup returns the Postfix TLS policy for domain.
 //
+// Postfix may send a full email address instead of a bare domain; if the key
+// contains "@" the domain part (after the last "@") is used.
 // Cache hit → immediate response.
 // Cache miss → SMTP probe, then write to cache.
 // Redis errors and unreachable hosts return NOTFOUND (fail-open).
 // Successful probe with no STARTTLS → NOTFOUND, cached for ttlNoTLS.
 // Probe errors (connection failures) → NOTFOUND, not cached.
 func (h *TLSPolicyHandler) Lookup(ctx context.Context, domain string) *SocketmapResponse {
+	if idx := strings.LastIndex(domain, "@"); idx != -1 {
+		domain = domain[idx+1:]
+	}
+	if domain == "" {
+		return &SocketmapResponse{Status: "NOTFOUND"}
+	}
+
 	key := tlsPolicyKeyPrefix + domain
 
 	cached, err := h.redis.Get(ctx, key).Result()
