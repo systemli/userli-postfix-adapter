@@ -74,18 +74,20 @@ func (rl *RateLimiter) CheckAndIncrement(sender string, quota *Quota) (allowed b
 
 	counter.timestamps = validTimestamps
 
-	// Check limits (0 means unlimited)
-	if quota.PerHour > 0 && hourCount >= quota.PerHour {
-		return false, hourCount, dayCount
-	}
-	if quota.PerDay > 0 && dayCount >= quota.PerDay {
-		return false, hourCount, dayCount
-	}
-
-	// Add new timestamp
+	// Always record the current request (even if rejected) so that
+	// senders who keep trying while over-limit extend their own window
+	// instead of getting a free reset once old timestamps expire.
 	counter.timestamps = append(counter.timestamps, now)
 	hourCount++
 	dayCount++
+
+	// Check limits (0 means unlimited)
+	if quota.PerHour > 0 && hourCount > quota.PerHour {
+		return false, hourCount, dayCount
+	}
+	if quota.PerDay > 0 && dayCount > quota.PerDay {
+		return false, hourCount, dayCount
+	}
 
 	return true, hourCount, dayCount
 }
