@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Config is the configuration for the application.
@@ -30,6 +31,15 @@ type Config struct {
 
 	// RedisURL is the connection URL for Redis (used to persist rate-limit state).
 	RedisURL string
+
+	// TLSPolicyEhloHostname is the hostname sent in EHLO during SMTP probes.
+	TLSPolicyEhloHostname string
+
+	// TLSPolicyCacheTTLTLS is the Redis TTL for domains confirmed to support STARTTLS.
+	TLSPolicyCacheTTLTLS time.Duration
+
+	// TLSPolicyCacheTTLNoTLS is the Redis TTL for domains confirmed to not support STARTTLS.
+	TLSPolicyCacheTTLNoTLS time.Duration
 }
 
 // NewConfig creates a new Config with default values.
@@ -71,6 +81,25 @@ func NewConfig() (*Config, error) {
 		return nil, fmt.Errorf("REDIS_URL is required")
 	}
 
+	tlsPolicyEhloHostname := os.Getenv("TLS_POLICY_EHLO_HOSTNAME")
+	if tlsPolicyEhloHostname == "" {
+		tlsPolicyEhloHostname = "localhost"
+	}
+
+	tlsPolicyCacheTTLTLS := 168 * time.Hour // 7 days
+	if v := os.Getenv("TLS_POLICY_CACHE_TTL_TLS"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			tlsPolicyCacheTTLTLS = d
+		}
+	}
+
+	tlsPolicyCacheTTLNoTLS := 24 * time.Hour // 1 day
+	if v := os.Getenv("TLS_POLICY_CACHE_TTL_NOTLS"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			tlsPolicyCacheTTLNoTLS = d
+		}
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -80,5 +109,8 @@ func NewConfig() (*Config, error) {
 		MetricsListenAddr:         metricsListenAddr,
 		RateLimitMessage:          rateLimitMessage,
 		RedisURL:                  redisURL,
+		TLSPolicyEhloHostname:     tlsPolicyEhloHostname,
+		TLSPolicyCacheTTLTLS:      tlsPolicyCacheTTLTLS,
+		TLSPolicyCacheTTLNoTLS:    tlsPolicyCacheTTLNoTLS,
 	}, nil
 }

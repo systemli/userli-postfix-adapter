@@ -38,6 +38,8 @@ services:
       POSTFIX_virtual_mailbox_maps: "socketmap:inet:adapter:10001:mailbox"
       POSTFIX_smtpd_sender_login_maps: "socketmap:inet:adapter:10001:senders"
       POSTFIX_smtpd_end_of_data_restrictions: "check_policy_service inet:adapter:10003"
+      POSTFIX_smtp_tls_security_level: "may"
+      POSTFIX_smtp_tls_policy_maps: "socketmap:inet:adapter:10001:tls_policy"
     networks:
       - userli
 

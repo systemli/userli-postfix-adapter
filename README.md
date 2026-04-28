@@ -3,7 +3,7 @@
 [![Integration](https://github.com/systemli/userli-postfix-adapter/actions/workflows/integration.yml/badge.svg)](https://github.com/systemli/userli-postfix-adapter/actions/workflows/integration.yml) [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=systemli_userli-postfix-adapter&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=systemli_userli-postfix-adapter) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=systemli_userli-postfix-adapter&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=systemli_userli-postfix-adapter) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=systemli_userli-postfix-adapter&metric=coverage)](https://sonarcloud.io/summary/new_code?id=systemli_userli-postfix-adapter)
 
 This is a postfix socketmap adapter for the [userli](https://github.com/systemli/userli) project.
-It implements the [socketmap protocol](https://www.postfix.org/socketmap_table.5.html) to provide dynamic lookups for aliases, domains, mailboxes, and senders.
+It implements the [socketmap protocol](https://www.postfix.org/socketmap_table.5.html) for dynamic lookups (aliases, domains, mailboxes, senders, and outgoing TLS policy), and the [policy delegation protocol](https://www.postfix.org/SMTPD_POLICY_README.html) for per-sender rate limiting.
 
 ## Configuration
 
@@ -17,6 +17,9 @@ The adapter is configured via environment variables:
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 - `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
 - `REDIS_URL`: Connection URL for Redis (required). Format follows [`redis.ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL), e.g. `redis://[user:password@]host:port/db`. Rate-limit state is stored in Redis so it survives restarts.
+- `TLS_POLICY_EHLO_HOSTNAME`: Hostname sent in `EHLO` when probing remote SMTP servers for STARTTLS support. Should match the mail server's hostname. Default: `localhost`.
+- `TLS_POLICY_CACHE_TTL_TLS`: How long to cache a positive STARTTLS result in Redis. Default: `168h` (7 days).
+- `TLS_POLICY_CACHE_TTL_NOTLS`: How long to cache a negative STARTTLS result in Redis. Kept short so domains that newly deploy TLS are picked up quickly. Default: `24h`.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
 
@@ -25,6 +28,32 @@ virtual_alias_maps = socketmap:inet:localhost:10001:alias
 virtual_mailbox_domains = socketmap:inet:localhost:10001:domain
 virtual_mailbox_maps = socketmap:inet:localhost:10001:mailbox
 smtpd_sender_login_maps = socketmap:inet:localhost:10001:senders
+```
+
+### TLS Policy (`smtp_tls_policy_maps`)
+
+The adapter implements a `tls_policy` socketmap that Postfix can query for per-domain outgoing TLS policy.
+When Postfix looks up a domain, the adapter:
+
+1. Returns a cached result from Redis if available.
+2. Otherwise probes the domain's MX servers via SMTP (`EHLO` + checking for `STARTTLS` in extensions). No mail is sent.
+3. Caches and returns `encrypt` if STARTTLS was found, or `NOTFOUND` (Postfix uses its default) if not.
+
+Probe errors (unreachable hosts) are not cached so they are retried on the next delivery attempt.
+Redis errors return `NOTFOUND` (fail-open).
+
+Configure in Postfix `main.cf`:
+
+```text
+smtp_tls_security_level = may
+smtp_tls_policy_maps    = socketmap:inet:localhost:10001:tls_policy
+```
+
+If you already have a policy map chain, append the adapter:
+
+```text
+smtp_tls_policy_maps = socketmap:inet:localhost:8461:postfix, \
+                       socketmap:inet:localhost:10001:tls_policy
 ```
 
 ### Rate Limiting (Policy Server)
@@ -72,6 +101,7 @@ The socketmap names supported are:
 - `domain` - For virtual domain lookups
 - `mailbox` - For virtual mailbox lookups
 - `senders` - For sender login map lookups
+- `tls_policy` - For outgoing TLS policy (`smtp_tls_policy_maps`)
 
 ## Usage Example
 
@@ -89,6 +119,9 @@ postmap -q "user@example.com" socketmap:inet:localhost:10001:mailbox
 
 # Test sender lookup
 postmap -q "sender@example.com" socketmap:inet:localhost:10001:senders
+
+# Test TLS policy lookup (returns "encrypt" for domains supporting STARTTLS)
+postmap -q "gmail.com" socketmap:inet:localhost:10001:tls_policy
 ```
 
 ### Docker Usage
@@ -176,6 +209,12 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 - `userli_postfix_adapter_quota_exceeded_total` - Total messages rejected due to quota
 - `userli_postfix_adapter_quota_checks_total` - Total quota checks performed
 - `userli_postfix_adapter_ratelimit_backend_errors_total` - Total Redis errors hit by the rate limiter, labelled by `operation`
+
+**TLS Policy Metrics:**
+
+- `userli_postfix_adapter_tls_policy_cache_hits_total` - Redis cache hits, labelled by `result` (`encrypt`/`notls`)
+- `userli_postfix_adapter_tls_policy_probe_total` - Outgoing SMTP probes, labelled by `result` (`tls`/`notls`/`error`)
+- `userli_postfix_adapter_tls_policy_probe_duration_seconds` - SMTP probe duration histogram
 
 All metrics include relevant labels (handler, status, endpoint, etc.).
 
