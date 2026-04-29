@@ -11,6 +11,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// Note: the Redis client is created once in main() (see newRedisClient in
+// redisclient.go) and shared with the lookup cache; RateLimiter does not own
+// its lifecycle.
+
 // rateLimitTTL is set slightly above 24h so a quiet sender's key naturally
 // evicts but no still-relevant timestamp is dropped early.
 const rateLimitTTL = 25 * time.Hour
@@ -63,30 +67,14 @@ type RateLimiter struct {
 	logger *zap.Logger
 }
 
-// NewRateLimiter parses the Redis URL, opens a client and pings the server.
-// A failed ping is logged as a warning but does not abort startup (fail-open).
-func NewRateLimiter(ctx context.Context, url string, logger *zap.Logger) (*RateLimiter, error) {
-	opts, err := redis.ParseURL(url)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
-	}
-
-	client := redis.NewClient(opts)
-
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := client.Ping(pingCtx).Err(); err != nil {
-		logger.Warn("Redis ping failed at startup, continuing fail-open",
-			zap.String("addr", opts.Addr), zap.Error(err))
-	} else {
-		logger.Info("Connected to Redis", zap.String("addr", opts.Addr))
-	}
-
+// NewRateLimiter wraps an existing Redis client with the sliding-window script.
+// Lifecycle of the client is owned by the caller.
+func NewRateLimiter(client *redis.Client, logger *zap.Logger) *RateLimiter {
 	return &RateLimiter{
 		client: client,
 		script: redis.NewScript(rateLimitScript),
 		logger: logger,
-	}, nil
+	}
 }
 
 // CheckAndIncrement runs the sliding-window check atomically in Redis.
@@ -154,11 +142,6 @@ func (rl *RateLimiter) GetCounts(ctx context.Context, sender string) (hourCount,
 	}
 
 	return int(hourCmd.Val()), int(dayCmd.Val())
-}
-
-// Close shuts down the Redis client.
-func (rl *RateLimiter) Close() error {
-	return rl.client.Close()
 }
 
 func keyFor(sender string) string {

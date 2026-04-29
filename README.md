@@ -17,6 +17,7 @@ The adapter is configured via environment variables:
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 - `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
 - `REDIS_URL`: Connection URL for Redis (required). Format follows [`redis.ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL), e.g. `redis://[user:password@]host:port/db`. Rate-limit state is stored in Redis so it survives restarts.
+- `LOOKUP_CACHE_TTL`: TTL for cached successful (`OK`) lookup responses in Redis. Accepts any [Go duration](https://pkg.go.dev/time#ParseDuration) (e.g. `300s`, `5m`). Default: `300s`. Set to `0` to disable the cache. `NOTFOUND`/`TEMP`/`PERM` responses are never cached.
 
 In Postfix, you can configure the adapter using the socketmap protocol like this:
 

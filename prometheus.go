@@ -94,6 +94,11 @@ var (
 		Name: "userli_postfix_adapter_ratelimit_backend_errors_total",
 		Help: "Total number of rate-limit backend (Redis) errors, by operation",
 	}, []string{"operation"})
+
+	lookupCacheTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_lookup_cache_total",
+		Help: "Total number of lookup cache events, by handler and result (hit, miss, error)",
+	}, []string{"handler", "result"})
 )
 
 // StartMetricsServer starts a new HTTP server for prometheus metrics and health checks.
@@ -117,6 +122,7 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		quotaChecksTotal,
 		policyConnectionPoolFullTotal,
 		rateLimitBackendErrors,
+		lookupCacheTotal,
 	)
 
 	mux := http.NewServeMux()

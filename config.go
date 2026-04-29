@@ -3,7 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 )
+
+// defaultLookupCacheTTL is the default TTL for cached successful lookups when
+// LOOKUP_CACHE_TTL is not set. Setting LOOKUP_CACHE_TTL=0 disables the cache.
+const defaultLookupCacheTTL = 300 * time.Second
 
 // Config is the configuration for the application.
 type Config struct {
@@ -28,8 +33,13 @@ type Config struct {
 	// RateLimitMessage is the message returned when rate limit is exceeded.
 	RateLimitMessage string
 
-	// RedisURL is the connection URL for Redis (used to persist rate-limit state).
+	// RedisURL is the connection URL for Redis (used to persist rate-limit state
+	// and cache successful lookup responses).
 	RedisURL string
+
+	// LookupCacheTTL is the TTL for cached successful lookup responses.
+	// Zero disables caching entirely.
+	LookupCacheTTL time.Duration
 }
 
 // NewConfig creates a new Config with default values.
@@ -71,6 +81,18 @@ func NewConfig() (*Config, error) {
 		return nil, fmt.Errorf("REDIS_URL is required")
 	}
 
+	lookupCacheTTL := defaultLookupCacheTTL
+	if raw := os.Getenv("LOOKUP_CACHE_TTL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("LOOKUP_CACHE_TTL: %w", err)
+		}
+		if parsed < 0 {
+			return nil, fmt.Errorf("LOOKUP_CACHE_TTL must be non-negative")
+		}
+		lookupCacheTTL = parsed
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -80,5 +102,6 @@ func NewConfig() (*Config, error) {
 		MetricsListenAddr:         metricsListenAddr,
 		RateLimitMessage:          rateLimitMessage,
 		RedisURL:                  redisURL,
+		LookupCacheTTL:            lookupCacheTTL,
 	}, nil
 }
