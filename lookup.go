@@ -32,12 +32,14 @@ func (r *SocketmapResponse) String() string {
 // It implements the ConnectionHandler interface.
 type LookupServer struct {
 	client UserliService
+	cache  *LookupCache
 	logger *zap.Logger
 }
 
-// NewLookupServer creates a new LookupServer with the given UserliService
-func NewLookupServer(client UserliService, logger *zap.Logger) *LookupServer {
-	return &LookupServer{client: client, logger: logger}
+// NewLookupServer creates a new LookupServer with the given UserliService and
+// optional LookupCache. A nil cache disables caching entirely.
+func NewLookupServer(client UserliService, cache *LookupCache, logger *zap.Logger) *LookupServer {
+	return &LookupServer{client: client, cache: cache, logger: logger}
 }
 
 // StartLookupServer starts the lookup server on the given address
@@ -113,23 +115,32 @@ func (s *LookupServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 // processRequest routes a socketmap request to the appropriate handler with a timeout context.
 // Using a separate method ensures defer cancel() runs after each request, preventing context leaks.
+// Successful (OK) responses are cached so repeated lookups skip the upstream API.
 func (s *LookupServer) processRequest(ctx context.Context, mapName, key string) *SocketmapResponse {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	if cached, ok := s.cache.Get(reqCtx, mapName, key); ok {
+		return cached
+	}
+
+	var response *SocketmapResponse
 	switch mapName {
 	case "alias":
-		return s.handleAlias(reqCtx, key)
+		response = s.handleAlias(reqCtx, key)
 	case "domain":
-		return s.handleDomain(reqCtx, key)
+		response = s.handleDomain(reqCtx, key)
 	case "mailbox":
-		return s.handleMailbox(reqCtx, key)
+		response = s.handleMailbox(reqCtx, key)
 	case "senders":
-		return s.handleSenders(reqCtx, key)
+		response = s.handleSenders(reqCtx, key)
 	default:
 		s.logger.Error("Unknown map name", zap.String("map", mapName))
 		return &SocketmapResponse{Status: "PERM", Data: "Unknown map name"}
 	}
+
+	s.cache.Set(reqCtx, mapName, key, response)
+	return response
 }
 
 // handleAlias processes alias lookup requests

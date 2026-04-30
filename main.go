@@ -42,16 +42,24 @@ func main() {
 	}
 
 	userli := NewUserli(config.UserliToken, config.UserliBaseURL, WithDelimiter(config.PostfixRecipientDelimiter))
-	lookupServer := NewLookupServer(userli, logger.Named("lookup"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	rateLimiter, err := NewRateLimiter(ctx, config.RedisURL, logger.Named("ratelimit"))
+	redisClient, err := newRedisClient(ctx, config.RedisURL, logger.Named("redis"))
 	if err != nil {
-		logger.Fatal("Failed to initialize rate limiter", zap.Error(err))
+		logger.Fatal("Failed to initialize Redis client", zap.Error(err))
 	}
-	defer func() { _ = rateLimiter.Close() }()
+	defer func() { _ = redisClient.Close() }()
+
+	rateLimiter := NewRateLimiter(redisClient, logger.Named("ratelimit"))
+
+	var lookupCache *LookupCache
+	if config.LookupCacheTTL > 0 {
+		lookupCache = NewLookupCache(redisClient, config.LookupCacheTTL, logger.Named("lookupcache"))
+	}
+
+	lookupServer := NewLookupServer(userli, lookupCache, logger.Named("lookup"))
 	policyServer := NewPolicyServer(userli, rateLimiter, config.RateLimitMessage, logger.Named("policy"))
 
 	var wg sync.WaitGroup
