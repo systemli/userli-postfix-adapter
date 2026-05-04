@@ -639,6 +639,98 @@ func (s *UserliTestSuite) TestSanitizeEmail() {
 	})
 }
 
+func (s *UserliTestSuite) TestAuthenticate() {
+	s.Run("success", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			MatchHeader("Authorization", "Bearer insecure").
+			MatchHeader("Content-Type", "application/json").
+			MatchType("json").
+			JSON(map[string]string{"email": "user@example.com", "password": "secret"}).
+			Reply(200).
+			JSON(map[string]string{"message": "success"})
+
+		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
+		s.NoError(err)
+		s.True(gock.IsDone())
+		s.True(ok)
+		s.Equal("success", msg)
+	})
+
+	s.Run("invalid credentials", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			MatchHeader("Authorization", "Bearer insecure").
+			Reply(401).
+			JSON(map[string]string{"message": "authentication failed"})
+
+		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "wrong")
+		s.NoError(err)
+		s.True(gock.IsDone())
+		s.False(ok)
+		s.Equal("authentication failed", msg)
+	})
+
+	s.Run("forbidden spam user", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			Reply(403).
+			JSON(map[string]string{"message": "user disabled due to spam role"})
+
+		ok, msg, err := s.userli.Authenticate(context.Background(), "spam@example.com", "secret")
+		s.NoError(err)
+		s.True(gock.IsDone())
+		s.False(ok)
+		s.Equal("user disabled due to spam role", msg)
+	})
+
+	s.Run("forbidden password change required", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			Reply(403).
+			JSON(map[string]string{"message": "user password change required"})
+
+		ok, msg, err := s.userli.Authenticate(context.Background(), "pwchange@example.com", "secret")
+		s.NoError(err)
+		s.True(gock.IsDone())
+		s.False(ok)
+		s.Equal("user password change required", msg)
+	})
+
+	s.Run("server error", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			Reply(500)
+
+		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
+		s.Error(err)
+		s.True(gock.IsDone())
+		s.False(ok)
+		s.Equal("unexpected error", msg)
+	})
+
+	s.Run("invalid email", func() {
+		ok, msg, err := s.userli.Authenticate(context.Background(), "invalid", "secret")
+		s.NoError(err)
+		s.False(ok)
+		s.Equal("authentication failed", msg)
+	})
+
+	s.Run("timeout", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			Reply(200).
+			Delay(6 * time.Second)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		ok, _, err := s.userli.Authenticate(ctx, "user@example.com", "secret")
+		s.Error(err)
+		s.False(ok)
+	})
+}
+
 func TestUserl(t *testing.T) {
 	suite.Run(t, new(UserliTestSuite))
 }

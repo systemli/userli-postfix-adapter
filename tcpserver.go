@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +43,12 @@ type ConnectionHandler interface {
 	HandleConnection(ctx context.Context, conn net.Conn)
 }
 
-// StartTCPServer starts a TCP server with connection pooling and graceful shutdown
+// isUnixSocket returns true if the address looks like a UNIX socket path.
+func isUnixSocket(addr string) bool {
+	return strings.HasPrefix(addr, "/") || strings.HasSuffix(addr, ".sock")
+}
+
+// StartTCPServer starts a TCP or UNIX socket server with connection pooling and graceful shutdown
 func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerConfig, handler ConnectionHandler) {
 	defer wg.Done()
 
@@ -49,15 +56,37 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 	var activeConnWg sync.WaitGroup
 	var poolUsage atomic.Int64
 
-	lc := net.ListenConfig{
-		KeepAlive: KeepAliveTimeout,
-	}
+	var listener net.Listener
+	var err error
 
-	listener, err := lc.Listen(ctx, "tcp", config.Addr)
-	if err != nil {
-		config.Logger.Error("Failed to create listener",
-			zap.String("addr", config.Addr), zap.Error(err))
-		return
+	if isUnixSocket(config.Addr) {
+		// Remove stale socket file if it exists
+		_ = os.Remove(config.Addr)
+
+		listener, err = net.Listen("unix", config.Addr)
+		if err != nil {
+			config.Logger.Error("Failed to create UNIX socket listener",
+				zap.String("addr", config.Addr), zap.Error(err))
+			return
+		}
+
+		// Set permissions so Postfix can connect
+		if chmodErr := os.Chmod(config.Addr, 0666); chmodErr != nil {
+			config.Logger.Error("Failed to set socket permissions",
+				zap.String("addr", config.Addr), zap.Error(chmodErr))
+			listener.Close()
+			return
+		}
+	} else {
+		lc := net.ListenConfig{
+			KeepAlive: KeepAliveTimeout,
+		}
+		listener, err = lc.Listen(ctx, "tcp", config.Addr)
+		if err != nil {
+			config.Logger.Error("Failed to create TCP listener",
+				zap.String("addr", config.Addr), zap.Error(err))
+			return
+		}
 	}
 	defer listener.Close()
 
@@ -67,6 +96,9 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 		config.Logger.Info("Shutting down server...",
 			zap.String("addr", config.Addr))
 		listener.Close()
+		if isUnixSocket(config.Addr) {
+			_ = os.Remove(config.Addr)
+		}
 		activeConnWg.Wait()
 		config.Logger.Info("All connections closed",
 			zap.String("addr", config.Addr))
