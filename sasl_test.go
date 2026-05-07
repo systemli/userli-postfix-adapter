@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -408,4 +410,58 @@ func TestSASL_CUIDIncrementsPerConnection(t *testing.T) {
 	assert.NotEmpty(t, cuid1)
 	assert.NotEmpty(t, cuid2)
 	assert.NotEqual(t, cuid1, cuid2, "CUID should increment per connection")
+}
+
+func TestSASL_UnixSocket_Listener(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(true, "success", nil)
+
+	addr := filepath.Join(t.TempDir(), "sasl.sock")
+
+	server := NewSASLServer(mockService, zap.NewNop())
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go StartSASLServer(ctx, &wg, addr, server)
+
+	// Poll for the socket to appear (server starts asynchronously).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if info, err := os.Stat(addr); err == nil {
+			require.NotZero(t, info.Mode()&os.ModeSocket,
+				"path exists but is not a UNIX socket: mode=%s", info.Mode())
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			wg.Wait()
+			t.Fatalf("UNIX socket %q not created within timeout", addr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Dial over UNIX and run a full PLAIN AUTH exchange to prove the listener works.
+	conn, err := net.DialTimeout("unix", addr, 2*time.Second)
+	require.NoError(t, err)
+	h := &saslTestHelper{
+		t:      t,
+		conn:   conn,
+		reader: bufio.NewReader(conn),
+		writer: bufio.NewWriter(conn),
+	}
+	h.doHandshake()
+	resp := h.sendPlainAuth("1", "user@example.org", "secret")
+	assert.Equal(t, "OK\t1\tuser=user@example.org", resp)
+	h.close()
+
+	// Cancel and ensure the socket is cleaned up.
+	cancel()
+	wg.Wait()
+	_, err = os.Stat(addr)
+	assert.True(t, os.IsNotExist(err),
+		"socket file should be removed on shutdown, got err=%v", err)
+
+	mockService.AssertExpectations(t)
 }

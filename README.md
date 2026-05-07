@@ -76,6 +76,8 @@ smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
 ```
 
+When the adapter runs in a container or under a chroot, the socket path must be reachable by Postfix — typically a shared volume mounted into both, or a path inside Postfix's chroot directory (`/var/spool/postfix/`). A path like `/tmp/...` inside the adapter container is not visible to Postfix on the host.
+
 ## Docker
 
 You can run the adapter using Docker.

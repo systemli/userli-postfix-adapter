@@ -59,7 +59,9 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 	var listener net.Listener
 	var err error
 
+	network := "tcp"
 	if isUnixSocket(config.Addr) {
+		network = "unix"
 		// Remove stale socket file if it exists
 		_ = os.Remove(config.Addr)
 
@@ -74,6 +76,25 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 		if chmodErr := os.Chmod(config.Addr, 0666); chmodErr != nil {
 			config.Logger.Error("Failed to set socket permissions",
 				zap.String("addr", config.Addr), zap.Error(chmodErr))
+			listener.Close()
+			return
+		}
+
+		// Confirm the socket file is actually present at the expected path.
+		// If something raced to delete it (or net.Listen produced a file at
+		// an unexpected location), fail loudly instead of silently logging
+		// "Server started" while Postfix can't connect.
+		info, statErr := os.Stat(config.Addr)
+		if statErr != nil {
+			config.Logger.Error("UNIX socket file missing after listen",
+				zap.String("addr", config.Addr), zap.Error(statErr))
+			listener.Close()
+			return
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			config.Logger.Error("Path exists but is not a socket",
+				zap.String("addr", config.Addr),
+				zap.String("mode", info.Mode().String()))
 			listener.Close()
 			return
 		}
@@ -105,6 +126,7 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 	}()
 
 	config.Logger.Info("Server started",
+		zap.String("network", network),
 		zap.String("addr", config.Addr))
 
 	for {
