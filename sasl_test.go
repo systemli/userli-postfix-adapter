@@ -162,19 +162,19 @@ func TestSASL_Handshake(t *testing.T) {
 
 	lines := h.readServerHandshake()
 
-	// Verify handshake lines
+	// Verify handshake lines. MECH must come before SPID so Postfix
+	// recognizes this as an auth-client (not auth-master) socket.
 	assert.True(t, strings.HasPrefix(lines[0], "VERSION\t1\t2"), "first line should be VERSION")
-	assert.True(t, strings.HasPrefix(lines[1], "SPID\t"), "second line should be SPID")
-	assert.True(t, strings.HasPrefix(lines[2], "CUID\t"), "third line should be CUID")
-	assert.True(t, strings.HasPrefix(lines[3], "COOKIE\t"), "fourth line should be COOKIE")
+	assert.Equal(t, "MECH\tPLAIN\tplaintext", lines[1])
+	assert.Equal(t, "MECH\tLOGIN\tplaintext", lines[2])
+	assert.True(t, strings.HasPrefix(lines[3], "SPID\t"), "fourth line should be SPID")
+	assert.True(t, strings.HasPrefix(lines[4], "CUID\t"), "fifth line should be CUID")
+	assert.True(t, strings.HasPrefix(lines[5], "COOKIE\t"), "sixth line should be COOKIE")
 
 	// Check COOKIE is 32 hex chars
-	cookie := strings.TrimPrefix(lines[3], "COOKIE\t")
+	cookie := strings.TrimPrefix(lines[5], "COOKIE\t")
 	assert.Len(t, cookie, 32)
 
-	// Verify mechanisms
-	assert.Equal(t, "MECH\tPLAIN\tplaintext", lines[4])
-	assert.Equal(t, "MECH\tLOGIN\tplaintext", lines[5])
 	assert.Equal(t, "DONE", lines[6])
 
 	// Send client handshake
