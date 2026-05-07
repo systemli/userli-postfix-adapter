@@ -79,25 +79,6 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 			listener.Close()
 			return
 		}
-
-		// Confirm the socket file is actually present at the expected path.
-		// If something raced to delete it (or net.Listen produced a file at
-		// an unexpected location), fail loudly instead of silently logging
-		// "Server started" while Postfix can't connect.
-		info, statErr := os.Stat(config.Addr)
-		if statErr != nil {
-			config.Logger.Error("UNIX socket file missing after listen",
-				zap.String("addr", config.Addr), zap.Error(statErr))
-			listener.Close()
-			return
-		}
-		if info.Mode()&os.ModeSocket == 0 {
-			config.Logger.Error("Path exists but is not a socket",
-				zap.String("addr", config.Addr),
-				zap.String("mode", info.Mode().String()))
-			listener.Close()
-			return
-		}
 	} else {
 		lc := net.ListenConfig{
 			KeepAlive: KeepAliveTimeout,
