@@ -104,13 +104,15 @@ func (s *SASLServer) sendHandshake(writer *bufio.Writer, cuid uint64) error {
 		return fmt.Errorf("failed to generate cookie: %w", err)
 	}
 
+	// MECH lines must precede SPID: Postfix uses SPID-before-MECH as the
+	// signal that it has connected to an auth-master socket and aborts.
 	lines := []string{
 		"VERSION\t1\t2",
+		"MECH\tPLAIN\tplaintext",
+		"MECH\tLOGIN\tplaintext",
 		fmt.Sprintf("SPID\t%d", os.Getpid()),
 		fmt.Sprintf("CUID\t%d", cuid),
 		fmt.Sprintf("COOKIE\t%032x", cookie),
-		"MECH\tPLAIN\tplaintext",
-		"MECH\tLOGIN\tplaintext",
 		"DONE",
 	}
 
