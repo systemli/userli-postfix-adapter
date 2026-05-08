@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -408,4 +409,98 @@ func TestSASL_CUIDIncrementsPerConnection(t *testing.T) {
 	assert.NotEmpty(t, cuid1)
 	assert.NotEmpty(t, cuid2)
 	assert.NotEqual(t, cuid1, cuid2, "CUID should increment per connection")
+}
+
+// assertNoTempParameter asserts that a FAIL response does not contain the
+// `temp` flag or `temp=` parameter — Postfix maps either to 454 (retryable),
+// while permanent auth failures must produce 535.
+func assertNoTempParameter(t *testing.T, resp string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(resp, "FAIL\t"), "expected FAIL response, got: %q", resp)
+	fields := strings.Split(resp, "\t")
+	for _, f := range fields[2:] {
+		assert.NotEqual(t, "temp", f, "FAIL must not contain bare temp parameter")
+		assert.False(t, strings.HasPrefix(f, "temp="), "FAIL must not contain temp= parameter, got field: %q", f)
+	}
+}
+
+func TestSASL_FailResponse_NoTempParameter(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
+		Return(false, "authentication failed", nil)
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	resp := h.sendPlainAuth("1", "user@example.org", "wrong")
+	assertNoTempParameter(t, resp)
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_FailResponse_APIError_NoTempParameter(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
+		Return(false, "", fmt.Errorf("connection refused"))
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	resp := h.sendPlainAuth("1", "user@example.org", "secret")
+	assertNoTempParameter(t, resp)
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_FailResponse_SanitizesReason(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
+		Return(false, "bad\tcreds\nfor user", nil)
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	resp := h.sendPlainAuth("1", "user@example.org", "wrong")
+	require.True(t, strings.HasPrefix(resp, "FAIL\t1\t"))
+
+	var reasonField string
+	for f := range strings.SplitSeq(resp, "\t") {
+		if rest, ok := strings.CutPrefix(f, "reason="); ok {
+			reasonField = rest
+		}
+	}
+	require.NotEmpty(t, reasonField)
+	assert.NotContains(t, reasonField, "\t")
+	assert.NotContains(t, reasonField, "\n")
+	assert.NotContains(t, reasonField, "\r")
+	assert.Equal(t, "bad creds for user", reasonField)
+	mockService.AssertExpectations(t)
+}
+
+// TestSASL_IdleConnection_ClosesCleanly verifies that the server cleanly
+// closes idle connections via the per-iteration ReadDeadline rather than
+// holding onto them under the global ConnectionTimeout (which previously
+// caused `reader.ReadString` to time out mid-AUTH after 60s, closing the
+// connection without sending a FAIL — Postfix then mapped that EOF to
+// 454 "Connection lost to authentication server" instead of 535).
+func TestSASL_IdleConnection_ClosesCleanly(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	// Allow more than ReadTimeout (10s) of idle so the server closes us.
+	h.conn.SetReadDeadline(time.Now().Add(ReadTimeout + 5*time.Second))
+	_, err := h.reader.ReadString('\n')
+	assert.ErrorIs(t, err, io.EOF, "server must close idle connections cleanly")
 }

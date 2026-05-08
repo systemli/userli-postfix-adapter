@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -60,13 +61,14 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	cuid := s.connID.Add(1)
 
 	// Send server handshake
+	_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 	if err := s.sendHandshake(writer, cuid); err != nil {
 		s.logger.Error("failed to send handshake", zap.Error(err))
 		return
 	}
 
 	// Read client handshake
-	if err := s.readClientHandshake(reader); err != nil {
+	if err := s.readClientHandshake(conn, reader); err != nil {
 		s.logger.Error("failed to read client handshake", zap.Error(err))
 		return
 	}
@@ -77,8 +79,15 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 			return
 		}
 
+		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return
+			}
+			s.logger.Debug("failed to read AUTH request", zap.Error(err))
 			return
 		}
 		line = strings.TrimRight(line, "\r\n")
@@ -90,7 +99,7 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 		switch parts[0] {
 		case "AUTH":
-			s.handleAuth(ctx, reader, writer, parts)
+			s.handleAuth(ctx, conn, reader, writer, parts)
 		default:
 			s.logger.Debug("ignoring unknown command", zap.String("command", parts[0]))
 		}
@@ -126,11 +135,12 @@ func (s *SASLServer) sendHandshake(writer *bufio.Writer, cuid uint64) error {
 }
 
 // readClientHandshake reads and validates the client (Postfix) handshake.
-func (s *SASLServer) readClientHandshake(reader *bufio.Reader) error {
+func (s *SASLServer) readClientHandshake(conn net.Conn, reader *bufio.Reader) error {
 	gotVersion := false
 	gotCPID := false
 
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read client handshake: %w", err)
@@ -163,10 +173,10 @@ func (s *SASLServer) readClientHandshake(reader *bufio.Reader) error {
 }
 
 // handleAuth processes an AUTH request and sends OK or FAIL.
-func (s *SASLServer) handleAuth(ctx context.Context, reader *bufio.Reader, writer *bufio.Writer, parts []string) {
+func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, parts []string) {
 	// AUTH\t<id>\t<mechanism>\t[params...]
 	if len(parts) < 3 {
-		s.writeResponse(writer, "FAIL\t0\treason=Invalid AUTH request")
+		s.writeResponse(conn, writer, "FAIL\t0\treason=Invalid AUTH request")
 		return
 	}
 
@@ -182,21 +192,21 @@ func (s *SASLServer) handleAuth(ctx context.Context, reader *bufio.Reader, write
 	case "PLAIN":
 		email, password, err = s.parsePlainAuth(parts)
 	case "LOGIN":
-		email, password, err = s.handleLoginAuth(id, reader, writer)
+		email, password, err = s.handleLoginAuth(id, conn, reader, writer)
 	default:
 		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(writer, fmt.Sprintf("FAIL\t%s\treason=Unsupported mechanism", id))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Unsupported mechanism", id))
 		return
 	}
 
 	if err != nil {
 		s.logger.Info("auth parsing failed", zap.String("mechanism", mechanism), zap.Error(err))
 		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(writer, fmt.Sprintf("FAIL\t%s\treason=%s", id, err.Error()))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", id, sanitizeField(err.Error())))
 		return
 	}
 
-	s.authenticateAndRespond(ctx, writer, id, mechanism, email, password, startTime)
+	s.authenticateAndRespond(ctx, conn, writer, id, mechanism, email, password, startTime)
 }
 
 // parsePlainAuth extracts email and password from a PLAIN AUTH request.
@@ -245,12 +255,13 @@ func (s *SASLServer) parsePlainAuth(parts []string) (string, string, error) {
 //	C: CONT\t<id>\t<base64(username)>
 //	S: CONT\t<id>\t<base64("Password:")>
 //	C: CONT\t<id>\t<base64(password)>
-func (s *SASLServer) handleLoginAuth(id string, reader *bufio.Reader, writer *bufio.Writer) (string, string, error) {
+func (s *SASLServer) handleLoginAuth(id string, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) (string, string, error) {
 	// Send Username challenge
 	usernameChallenge := base64.StdEncoding.EncodeToString([]byte("Username:"))
-	s.writeResponse(writer, fmt.Sprintf("CONT\t%s\t%s", id, usernameChallenge))
+	s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", id, usernameChallenge))
 
 	// Read username response
+	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read LOGIN username: %w", err)
@@ -270,9 +281,10 @@ func (s *SASLServer) handleLoginAuth(id string, reader *bufio.Reader, writer *bu
 
 	// Send Password challenge
 	passwordChallenge := base64.StdEncoding.EncodeToString([]byte("Password:"))
-	s.writeResponse(writer, fmt.Sprintf("CONT\t%s\t%s", id, passwordChallenge))
+	s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", id, passwordChallenge))
 
 	// Read password response
+	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 	line, err = reader.ReadString('\n')
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read LOGIN password: %w", err)
@@ -298,21 +310,21 @@ func (s *SASLServer) handleLoginAuth(id string, reader *bufio.Reader, writer *bu
 }
 
 // authenticateAndRespond calls the Userli API and writes the auth result.
-func (s *SASLServer) authenticateAndRespond(ctx context.Context, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
+func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
 	ok, message, err := s.client.Authenticate(ctx, email, password)
 	if err != nil {
 		// Fail-closed: API errors reject authentication
 		s.logger.Error("authentication API error",
 			zap.String("email", email), zap.Error(err))
 		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=Internal error", id, email))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=Internal error", id, sanitizeField(email)))
 		return
 	}
 
 	if ok {
 		s.logger.Info("authentication successful", zap.String("email", email))
 		s.recordAuthResult(mechanism, "success", startTime)
-		s.writeResponse(writer, fmt.Sprintf("OK\t%s\tuser=%s", id, email))
+		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", id, sanitizeField(email)))
 	} else {
 		reason := message
 		if reason == "" {
@@ -320,18 +332,33 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, writer *bufio.W
 		}
 		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", reason))
 		s.recordAuthResult(mechanism, "invalid_credentials", startTime)
-		s.writeResponse(writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, email, reason))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), sanitizeField(reason)))
 	}
 }
 
 // writeResponse writes a line to the writer and flushes.
-func (s *SASLServer) writeResponse(writer *bufio.Writer, line string) {
+func (s *SASLServer) writeResponse(conn net.Conn, writer *bufio.Writer, line string) {
+	_ = conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 	if _, err := writer.WriteString(line + "\n"); err != nil {
 		s.logger.Error("failed to write response", zap.Error(err))
 	}
 	if err := writer.Flush(); err != nil {
 		s.logger.Error("failed to flush response", zap.Error(err))
 	}
+}
+
+// sanitizeField removes characters that would break the Dovecot auth
+// protocol's tab/newline framing. Postfix treats reason/user as opaque
+// text up to the next field separator.
+func sanitizeField(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r':
+			return ' '
+		default:
+			return r
+		}
+	}, s)
 }
 
 // recordAuthResult records metrics for an authentication attempt.
