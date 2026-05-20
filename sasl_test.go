@@ -485,22 +485,62 @@ func TestSASL_FailResponse_SanitizesReason(t *testing.T) {
 }
 
 // TestSASL_IdleConnection_ClosesCleanly verifies that the server cleanly
-// closes idle connections via the per-iteration ReadDeadline rather than
-// holding onto them under the global ConnectionTimeout (which previously
-// caused `reader.ReadString` to time out mid-AUTH after 60s, closing the
-// connection without sending a FAIL — Postfix then mapped that EOF to
-// 454 "Connection lost to authentication server" instead of 535).
+// closes truly idle connections via saslIdleTimeout rather than holding
+// onto them forever. Uses a short override so the test stays fast.
 func TestSASL_IdleConnection_ClosesCleanly(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
+
+	prev := saslIdleTimeout
+	saslIdleTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { saslIdleTimeout = prev })
+
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
 	defer h.close()
 	h.doHandshake()
 
-	// Allow more than ReadTimeout (10s) of idle so the server closes us.
-	h.conn.SetReadDeadline(time.Now().Add(ReadTimeout + 5*time.Second))
+	// Allow more than saslIdleTimeout so the server closes us.
+	h.conn.SetReadDeadline(time.Now().Add(saslIdleTimeout + 2*time.Second))
 	_, err := h.reader.ReadString('\n')
 	assert.ErrorIs(t, err, io.EOF, "server must close idle connections cleanly")
+}
+
+// TestSASL_PersistentConnection_SurvivesIdleGap verifies that the AUTH
+// loop holds the connection open across an idle gap longer than the
+// per-operation ReadTimeout. Postfix' xsasl_dovecot caches the auth
+// socket per smtpd worker; closing it earlier caused
+// `454 Connection lost to authentication server` on the next AUTH.
+func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
+		Return(true, "success", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
+		Return(false, "authentication failed", nil)
+
+	prev := saslIdleTimeout
+	saslIdleTimeout = 5 * time.Second
+	t.Cleanup(func() { saslIdleTimeout = prev })
+
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	resp := h.sendPlainAuth("1", "user@example.org", "secret")
+	assert.Equal(t, "OK\t1\tuser=user@example.org", resp)
+
+	// Idle longer than the per-operation ReadTimeout (10s would be too
+	// long for a unit test; we just need to outlast the previous broken
+	// timeout). The server must keep the connection alive.
+	time.Sleep(2 * time.Second)
+
+	resp = h.sendPlainAuth("2", "user@example.org", "wrong")
+	assert.True(t, strings.HasPrefix(resp, "FAIL\t2\t"),
+		"server must accept AUTH after idle gap, got %q", resp)
+	assert.Contains(t, resp, "reason=authentication failed")
+	mockService.AssertExpectations(t)
 }

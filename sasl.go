@@ -17,6 +17,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// saslIdleTimeout bounds how long the AUTH loop waits for the next request
+// on a persistent connection. Postfix' xsasl_dovecot client caches the
+// auth socket per smtpd worker up to smtpd_timeout (default 300s); closing
+// earlier leaves Postfix with a half-open socket and produces
+// `454 Connection lost to authentication server` on the next AUTH instead
+// of a clean FAIL. It is a var (not const) so tests can shorten it.
+var saslIdleTimeout = 360 * time.Second
+
 // SASLServer implements the Dovecot SASL authentication protocol.
 // It acts as a Dovecot auth server so Postfix can authenticate SMTP
 // clients via smtpd_sasl_type=dovecot without requiring Dovecot itself.
@@ -73,13 +81,17 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Handle AUTH requests in a loop (persistent connection)
+	// Handle AUTH requests in a loop (persistent connection). Use the
+	// longer saslIdleTimeout here so Postfix' xsasl_dovecot client can
+	// reuse the cached auth socket across smtpd sessions without us
+	// closing it mid-cache (which produces 454 Connection lost on the
+	// next AUTH instead of a clean FAIL).
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+		_ = conn.SetReadDeadline(time.Now().Add(saslIdleTimeout))
 
 		line, err := reader.ReadString('\n')
 		if err != nil {
