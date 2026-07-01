@@ -7,7 +7,7 @@ require (
 	github.com/h2non/gock v1.2.0
 	github.com/markdingo/netstring v1.0.2
 	github.com/prometheus/client_golang v1.23.2
-	github.com/redis/go-redis/v9 v9.20.0
+	github.com/redis/go-redis/v9 v9.21.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.28.0
 )
