@@ -3,7 +3,7 @@ module github.com/systemli/userli-postfix-adapter
 go 1.25.0
 
 require (
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/h2non/gock v1.2.0
 	github.com/markdingo/netstring v1.0.2
 	github.com/prometheus/client_golang v1.24.1
