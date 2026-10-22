@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"go.uber.org/zap"
+)
+
+const (
+	healthCheckTimeout  = 2 * time.Second
+	healthCheckInterval = 15 * time.Second
 )
 
 var (
@@ -151,6 +157,8 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		saslConnectionPoolFullTotal,
 	)
 
+	go runHealthCheckLoop(ctx, userliClient, healthCheckInterval)
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/health", healthHandler)
@@ -189,39 +197,67 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// checkUserliAPI verifies that the Userli API is reachable.
+func checkUserliAPI(ctx context.Context, userliClient UserliService) error {
+	ctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+
+	// Use a channel to make the blocking call cancellable
+	resultChan := make(chan error, 1)
+	go func() {
+		_, err := userliClient.GetDomain(ctx, "health-check.invalid")
+		resultChan <- err
+	}()
+
+	select {
+	case err := <-resultChan:
+		return err
+	case <-ctx.Done():
+		return errors.New("timeout")
+	}
+}
+
+// runHealthCheckLoop periodically checks the Userli API and updates healthCheckStatus,
+// independent of any probe requests.
+func runHealthCheckLoop(ctx context.Context, userliClient UserliService, interval time.Duration) {
+	check := func() {
+		if err := checkUserliAPI(ctx, userliClient); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			healthCheckStatus.Set(0)
+			logger.Warn("Health check failed", zap.Error(err))
+			return
+		}
+		healthCheckStatus.Set(1)
+	}
+
+	check()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check()
+		}
+	}
+}
+
 // readyHandler handles readiness probe requests (checks Userli API connectivity)
 func readyHandler(userliClient UserliService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Try to query a test domain to verify Userli API is reachable
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-
-		// Use a channel to make the blocking call cancellable
-		resultChan := make(chan error, 1)
-		go func() {
-			_, err := userliClient.GetDomain(ctx, "health-check.invalid")
-			resultChan <- err
-		}()
-
-		select {
-		case err := <-resultChan:
-			if err != nil {
-				healthCheckStatus.Set(0)
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "error": err.Error()})
-				logger.Warn("Readiness check failed", zap.Error(err))
-				return
-			}
-			healthCheckStatus.Set(1)
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
-		case <-ctx.Done():
-			healthCheckStatus.Set(0)
+		if err := checkUserliAPI(r.Context(), userliClient); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "error": "timeout"})
-			logger.Warn("Readiness check timeout")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "error": err.Error()})
+			logger.Warn("Readiness check failed", zap.Error(err))
+			return
 		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 	}
 }

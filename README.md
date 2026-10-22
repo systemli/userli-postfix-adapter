@@ -191,7 +191,7 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 
 **Health:**
 
-- `userli_postfix_adapter_health_check_status` - Health check status (1=healthy, 0=unhealthy)
+- `userli_postfix_adapter_health_check_status` - Userli API health (1=healthy, 0=unhealthy), checked in background every 15s, independent of `/ready`
 
 **Policy/Rate Limiting Metrics:**
 

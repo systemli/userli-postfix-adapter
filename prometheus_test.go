@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -84,33 +85,45 @@ func (s *PrometheusTestSuite) TestReadyHandler() {
 	})
 }
 
-func (s *PrometheusTestSuite) TestReadyHandlerHealthCheckStatusMetric() {
-	s.Run("sets health check status to 1 when healthy", func() {
+func (s *PrometheusTestSuite) TestHealthCheckLoop() {
+	s.Run("updates status independent of ready handler", func() {
+		healthCheckStatus.Set(0)
 		mockClient := &MockUserliService{}
 		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, nil)
 
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
-		w := httptest.NewRecorder()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go runHealthCheckLoop(ctx, mockClient, time.Hour)
 
-		handler := readyHandler(mockClient)
-		handler(w, req)
-
-		s.NotNil(w)
-		mockClient.AssertExpectations(s.T())
+		s.Eventually(func() bool {
+			return testutil.ToFloat64(healthCheckStatus) == 1
+		}, time.Second, 10*time.Millisecond)
 	})
 
-	s.Run("sets health check status to 0 when unhealthy", func() {
+	s.Run("sets status to 0 when api fails", func() {
+		healthCheckStatus.Set(1)
 		mockClient := &MockUserliService{}
 		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, errors.New("api error"))
 
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go runHealthCheckLoop(ctx, mockClient, time.Hour)
+
+		s.Eventually(func() bool {
+			return testutil.ToFloat64(healthCheckStatus) == 0
+		}, time.Second, 10*time.Millisecond)
+	})
+
+	s.Run("ready handler does not touch status", func() {
+		healthCheckStatus.Set(1)
+		mockClient := &MockUserliService{}
+		mockClient.On("GetDomain", mock.Anything, "health-check.invalid").Return(false, errors.New("api error"))
+
 		w := httptest.NewRecorder()
+		readyHandler(mockClient)(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
 
-		handler := readyHandler(mockClient)
-		handler(w, req)
-
-		s.NotNil(w)
-		mockClient.AssertExpectations(s.T())
+		s.Equal(http.StatusServiceUnavailable, w.Code)
+		s.Equal(1.0, testutil.ToFloat64(healthCheckStatus))
 	})
 }
 
