@@ -262,10 +262,34 @@ func TestSASL_PlainAuth_APIError(t *testing.T) {
 	defer h.close()
 	h.doHandshake()
 
-	// Fail-closed: API errors should reject authentication
-	resp := h.sendPlainAuth("1", "user@example.org", "secret")
-	assert.True(t, strings.HasPrefix(resp, "FAIL\t1\t"), "expected FAIL on API error")
+	// Fail-closed as a temporary failure: Postfix answers a lost
+	// connection with 454, while any FAIL would become a permanent 535.
+	h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tnologin\tresp=" +
+		base64.StdEncoding.EncodeToString([]byte("\x00user@example.org\x00secret")))
+	h.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err := h.reader.ReadString('\n')
+	assert.ErrorIs(t, err, io.EOF, "server must close the connection on API errors")
 	mockService.AssertExpectations(t)
+}
+
+// TestSASL_ZeroLengthInitialResponse covers "AUTH PLAIN =" and
+// "AUTH LOGIN =", which smtpd forwards unchanged as resp==.
+func TestSASL_ZeroLengthInitialResponse(t *testing.T) {
+	for _, mechanism := range []string{"PLAIN", "LOGIN"} {
+		t.Run(mechanism, func(t *testing.T) {
+			logger = zap.NewNop()
+			mockService := &MockUserliService{}
+			addr, _ := startSASLTestServer(t, mockService)
+
+			h := newSASLTestHelper(t, addr)
+			defer h.close()
+			h.doHandshake()
+
+			h.writeLine("AUTH\t1\t" + mechanism + "\tservice=smtp\tnologin\tresp==")
+			assert.Equal(t, "FAIL\t1\treason=authentication failed", h.readLine())
+			mockService.AssertExpectations(t)
+		})
+	}
 }
 
 // TestSASL_PlainAuth_WithoutInitialResponse covers clients that send
@@ -299,8 +323,7 @@ func TestSASL_PlainAuth_InvalidBase64(t *testing.T) {
 	h.doHandshake()
 
 	h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tresp=not-valid-base64!!!")
-	resp := h.readLine()
-	assert.True(t, strings.HasPrefix(resp, "FAIL\t1\t"))
+	assert.Equal(t, "FAIL\t1\treason=authentication failed", h.readLine())
 }
 
 func TestSASL_LoginAuth_Success(t *testing.T) {
@@ -541,27 +564,13 @@ func TestSASL_FailResponse_NoTempParameter(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
-func TestSASL_FailResponse_APIError_NoTempParameter(t *testing.T) {
-	logger = zap.NewNop()
-	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
-		Return(AuthResult{}, fmt.Errorf("connection refused"))
-	addr, _ := startSASLTestServer(t, mockService)
-
-	h := newSASLTestHelper(t, addr)
-	defer h.close()
-	h.doHandshake()
-
-	resp := h.sendPlainAuth("1", "user@example.org", "secret")
-	assertNoTempParameter(t, resp)
-	mockService.AssertExpectations(t)
-}
-
-func TestSASL_FailResponse_SanitizesReason(t *testing.T) {
+// TestSASL_FailResponse_HidesUserliMessage verifies that the Userli API
+// message never reaches Postfix, which would pass it on to the SMTP client.
+func TestSASL_FailResponse_HidesUserliMessage(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
-		Return(AuthResult{Username: "user@example.org", Message: "bad\tcreds\nfor user"}, nil)
+		Return(AuthResult{Username: "user@example.org", Message: "user disabled due to spam role"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -569,50 +578,32 @@ func TestSASL_FailResponse_SanitizesReason(t *testing.T) {
 	h.doHandshake()
 
 	resp := h.sendPlainAuth("1", "user@example.org", "wrong")
-	require.True(t, strings.HasPrefix(resp, "FAIL\t1\t"))
-
-	var reasonField string
-	for f := range strings.SplitSeq(resp, "\t") {
-		if rest, ok := strings.CutPrefix(f, "reason="); ok {
-			reasonField = rest
-		}
-	}
-	require.NotEmpty(t, reasonField)
-	assert.NotContains(t, reasonField, "\t")
-	assert.NotContains(t, reasonField, "\n")
-	assert.NotContains(t, reasonField, "\r")
-	assert.Equal(t, "bad creds for user", reasonField)
+	assert.Equal(t, "FAIL\t1\tuser=user@example.org\treason=authentication failed", resp)
 	mockService.AssertExpectations(t)
 }
 
-// TestSASL_IdleConnection_ClosesCleanly verifies that the server cleanly
-// closes truly idle connections via saslIdleTimeout rather than holding
-// onto them forever. Uses a short override so the test stays fast.
-func TestSASL_IdleConnection_ClosesCleanly(t *testing.T) {
+// TestSASL_IdleConnection_ClosedOnShutdown verifies that idle connections,
+// which wait without a deadline, are closed when the server shuts down.
+func TestSASL_IdleConnection_ClosedOnShutdown(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-
-	prev := saslIdleTimeout
-	saslIdleTimeout = 500 * time.Millisecond
-	t.Cleanup(func() { saslIdleTimeout = prev })
-
-	addr, _ := startSASLTestServer(t, mockService)
+	addr, cancel := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
 	defer h.close()
 	h.doHandshake()
 
-	// Allow more than saslIdleTimeout so the server closes us.
-	h.conn.SetReadDeadline(time.Now().Add(saslIdleTimeout + 2*time.Second))
+	cancel()
+
+	h.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, err := h.reader.ReadString('\n')
-	assert.ErrorIs(t, err, io.EOF, "server must close idle connections cleanly")
+	assert.ErrorIs(t, err, io.EOF, "server must close idle connections on shutdown")
 }
 
 // TestSASL_PersistentConnection_SurvivesIdleGap verifies that the AUTH
-// loop holds the connection open across an idle gap longer than the
-// per-operation ReadTimeout. Postfix' xsasl_dovecot caches the auth
-// socket per smtpd worker; closing it earlier caused
-// `454 Connection lost to authentication server` on the next AUTH.
+// loop holds the connection open across idle gaps. Postfix' xsasl_dovecot
+// caches the auth socket for the lifetime of the smtpd process; closing it
+// caused `454 Connection lost to authentication server` on the next AUTH.
 func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
@@ -620,10 +611,6 @@ func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 		Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
 		Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
-
-	prev := saslIdleTimeout
-	saslIdleTimeout = 5 * time.Second
-	t.Cleanup(func() { saslIdleTimeout = prev })
 
 	addr, _ := startSASLTestServer(t, mockService)
 
@@ -634,9 +621,7 @@ func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 	resp := h.sendPlainAuth("1", "user@example.org", "secret")
 	assert.Equal(t, "OK\t1\tuser=user@example.org", resp)
 
-	// Idle longer than the per-operation ReadTimeout (10s would be too
-	// long for a unit test; we just need to outlast the previous broken
-	// timeout). The server must keep the connection alive.
+	// The server must keep the connection alive while idle.
 	time.Sleep(2 * time.Second)
 
 	resp = h.sendPlainAuth("2", "user@example.org", "wrong")

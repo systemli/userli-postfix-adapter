@@ -59,7 +59,9 @@ Rate-limit state is persisted to Redis (`REDIS_URL`) so it survives restarts. If
 
 The adapter implements the Dovecot SASL authentication protocol, so Postfix can authenticate SMTP clients via `smtpd_sasl_type=dovecot` without requiring Dovecot itself. Authentication is performed against the Userli API (`/api/postfix/auth`). Supported mechanisms: PLAIN and LOGIN.
 
-**Important:** SASL authentication is fail-closed. If the API is unreachable, authentication is rejected.
+**Important:** SASL authentication is fail-closed. If the API is unreachable or slow (requests time out after 5 seconds), authentication is rejected with a temporary error (`454`), so mail clients retry instead of asking for a new password.
+
+Rejected credentials are always reported as `authentication failed`, without the reason from the Userli API (e.g. a spam lock). Postfix passes the reason to the SMTP client, and the API reports account states before checking the password. The reason is logged by the adapter.
 
 Configure in Postfix `main.cf` (TCP):
 
