@@ -31,6 +31,14 @@ var (
 	loginPasswordChallenge = base64.StdEncoding.EncodeToString([]byte("Password:"))
 )
 
+// saslMaxLineLength bounds a single protocol line. Postfix limits SMTP
+// AUTH lines far below this, so only a misbehaving client on the socket
+// can exceed it.
+const saslMaxLineLength = 16 * 1024
+
+// errLineTooLong is returned when a protocol line exceeds saslMaxLineLength.
+var errLineTooLong = errors.New("line too long")
+
 // SASLServer implements the Dovecot SASL authentication protocol.
 // It acts as a Dovecot auth server so Postfix can authenticate SMTP
 // clients via smtpd_sasl_type=dovecot without requiring Dovecot itself.
@@ -46,11 +54,13 @@ func NewSASLServer(client UserliService, logger *zap.Logger) *SASLServer {
 }
 
 // StartSASLServer starts the SASL auth server on the given address.
-func StartSASLServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *SASLServer) {
+// socketMode applies to UNIX sockets; zero means DefaultSocketMode.
+func StartSASLServer(ctx context.Context, wg *sync.WaitGroup, addr string, socketMode os.FileMode, server *SASLServer) {
 	config := TCPServerConfig{
-		Name:   "sasl",
-		Addr:   addr,
-		Logger: server.logger,
+		Name:       "sasl",
+		Addr:       addr,
+		Logger:     server.logger,
+		SocketMode: socketMode,
 		OnConnectionAcquired: func() {
 			saslActiveConnections.Inc()
 		},
@@ -106,7 +116,7 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 		_ = conn.SetReadDeadline(time.Now().Add(saslIdleTimeout))
 
-		line, err := reader.ReadString('\n')
+		line, err := readLine(reader)
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
@@ -182,7 +192,7 @@ func (s *SASLServer) readClientHandshake(conn net.Conn, reader *bufio.Reader) er
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-		line, err := reader.ReadString('\n')
+		line, err := readLine(reader)
 		if err != nil {
 			return fmt.Errorf("failed to read client handshake: %w", err)
 		}
@@ -406,6 +416,26 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", reason))
 		s.recordAuthResult(mechanism, "invalid_credentials", startTime)
 		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), sanitizeField(reason)))
+	}
+}
+
+// readLine reads a single \n-terminated line of at most saslMaxLineLength
+// bytes, including the terminator.
+func readLine(reader *bufio.Reader) (string, error) {
+	var line []byte
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if len(line)+len(chunk) > saslMaxLineLength {
+			return "", errLineTooLong
+		}
+		line = append(line, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return string(line), nil
 	}
 }
 

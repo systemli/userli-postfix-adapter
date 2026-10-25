@@ -18,13 +18,20 @@ const (
 	KeepAliveTimeout         = 60 * time.Second // TCP Keep-Alive timeout
 	ReadTimeout              = 10 * time.Second // Read operation timeout
 	WriteTimeout             = 10 * time.Second // Write operation timeout
+
+	// DefaultSocketMode is the permission mode for UNIX sockets when
+	// TCPServerConfig.SocketMode is not set.
+	DefaultSocketMode os.FileMode = 0666
 )
 
 // TCPServerConfig holds configuration for a TCP server
 type TCPServerConfig struct {
-	Name                 string
-	Addr                 string
-	Logger               *zap.Logger
+	Name   string
+	Addr   string
+	Logger *zap.Logger
+	// SocketMode is the permission mode for UNIX sockets.
+	// Zero means DefaultSocketMode.
+	SocketMode           os.FileMode
 	OnConnectionAcquired func()
 	OnConnectionReleased func()
 	OnConnectionPoolFull func()
@@ -71,7 +78,11 @@ func StartTCPServer(ctx context.Context, wg *sync.WaitGroup, config TCPServerCon
 		}
 
 		// Set permissions so Postfix can connect
-		if chmodErr := os.Chmod(config.Addr, 0666); chmodErr != nil {
+		socketMode := config.SocketMode
+		if socketMode == 0 {
+			socketMode = DefaultSocketMode
+		}
+		if chmodErr := os.Chmod(config.Addr, socketMode); chmodErr != nil {
 			config.Logger.Error("Failed to set socket permissions",
 				zap.String("addr", config.Addr), zap.Error(chmodErr))
 			listener.Close()

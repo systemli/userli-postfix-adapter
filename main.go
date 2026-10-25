@@ -79,7 +79,7 @@ func main() {
 	if config.SASLListenAddr != "" {
 		saslServer := NewSASLServer(userli, logger.Named("sasl"))
 		wg.Add(1)
-		go StartSASLServer(ctx, &wg, config.SASLListenAddr, saslServer)
+		go StartSASLServer(ctx, &wg, config.SASLListenAddr, config.SASLSocketMode, saslServer)
 	}
 
 	wg.Wait()
