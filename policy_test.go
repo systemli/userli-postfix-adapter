@@ -42,8 +42,8 @@ func (m *MockUserliServiceForPolicy) GetQuota(_ context.Context, _ string) (*Quo
 	return m.quota, nil
 }
 
-func (m *MockUserliServiceForPolicy) Authenticate(_ context.Context, _ string, _ string) (bool, string, error) {
-	return false, "", nil
+func (m *MockUserliServiceForPolicy) Authenticate(_ context.Context, _ string, _ string) (AuthResult, error) {
+	return AuthResult{}, nil
 }
 
 func TestPolicyServer_ReadRequest(t *testing.T) {

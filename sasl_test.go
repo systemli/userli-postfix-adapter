@@ -205,7 +205,7 @@ func TestSASL_Handshake_VersionMismatch(t *testing.T) {
 func TestSASL_PlainAuth_Success(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(true, "success", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -217,10 +217,26 @@ func TestSASL_PlainAuth_Success(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
+func TestSASL_PlainAuth_ReturnsCanonicalUsername(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "User+tag@Example.org", "secret").
+		Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	resp := h.sendPlainAuth("1", "User+tag@Example.org", "secret")
+	assert.Equal(t, "OK\t1\tuser=user@example.org", resp)
+	mockService.AssertExpectations(t)
+}
+
 func TestSASL_PlainAuth_InvalidCredentials(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").Return(false, "authentication failed", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -237,7 +253,7 @@ func TestSASL_PlainAuth_InvalidCredentials(t *testing.T) {
 func TestSASL_PlainAuth_APIError(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(false, "", fmt.Errorf("connection refused"))
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{}, fmt.Errorf("connection refused"))
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -282,7 +298,7 @@ func TestSASL_PlainAuth_InvalidBase64(t *testing.T) {
 func TestSASL_LoginAuth_Success(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(true, "success", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -297,7 +313,7 @@ func TestSASL_LoginAuth_Success(t *testing.T) {
 func TestSASL_LoginAuth_InvalidCredentials(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").Return(false, "authentication failed", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -327,8 +343,8 @@ func TestSASL_UnsupportedMechanism(t *testing.T) {
 func TestSASL_MultipleRequests(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
-	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(true, "success", nil)
-	mockService.On("Authenticate", mock.Anything, "other@example.org", "pass").Return(false, "authentication failed", nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+	mockService.On("Authenticate", mock.Anything, "other@example.org", "pass").Return(AuthResult{Username: "other@example.org", Message: "authentication failed"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -428,7 +444,7 @@ func TestSASL_FailResponse_NoTempParameter(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
-		Return(false, "authentication failed", nil)
+		Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -444,7 +460,7 @@ func TestSASL_FailResponse_APIError_NoTempParameter(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
-		Return(false, "", fmt.Errorf("connection refused"))
+		Return(AuthResult{}, fmt.Errorf("connection refused"))
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -460,7 +476,7 @@ func TestSASL_FailResponse_SanitizesReason(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
-		Return(false, "bad\tcreds\nfor user", nil)
+		Return(AuthResult{Username: "user@example.org", Message: "bad\tcreds\nfor user"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
@@ -516,9 +532,9 @@ func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
-		Return(true, "success", nil)
+		Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
 	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
-		Return(false, "authentication failed", nil)
+		Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
 
 	prev := saslIdleTimeout
 	saslIdleTimeout = 5 * time.Second
