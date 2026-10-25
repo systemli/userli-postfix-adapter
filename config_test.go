@@ -55,6 +55,29 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
 		s.Equal("redis://localhost:6379/0", config.RedisURL)
 		s.Equal(os.FileMode(0666), config.SASLSocketMode)
+		s.False(config.SASLRequireTLS)
+	})
+
+	s.Run("SASL require TLS", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+		s.T().Setenv("SASL_REQUIRE_TLS", "true")
+
+		config, err := NewConfig()
+
+		s.NoError(err)
+		s.True(config.SASLRequireTLS)
+	})
+
+	s.Run("invalid SASL require TLS", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+		s.T().Setenv("SASL_REQUIRE_TLS", "maybe")
+
+		config, err := NewConfig()
+
+		s.Nil(config)
+		s.ErrorContains(err, "SASL_REQUIRE_TLS")
 	})
 
 	s.Run("custom SASL socket mode", func() {

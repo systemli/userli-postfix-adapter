@@ -45,11 +45,14 @@ type SASLServer struct {
 	client UserliService
 	logger *zap.Logger
 	connID atomic.Uint64
+	// requireTLS rejects AUTH requests from SMTP sessions without TLS,
+	// like Dovecot's disable_plaintext_auth.
+	requireTLS bool
 }
 
 // NewSASLServer creates a new SASLServer with the given UserliService.
-func NewSASLServer(client UserliService, logger *zap.Logger) *SASLServer {
-	return &SASLServer{client: client, logger: logger}
+func NewSASLServer(client UserliService, logger *zap.Logger, requireTLS bool) *SASLServer {
+	return &SASLServer{client: client, logger: logger, requireTLS: requireTLS}
 }
 
 // StartSASLServer starts the SASL auth server on the given address.
@@ -151,6 +154,8 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 type pendingAuth struct {
 	id        string
 	mechanism string
+	// clientIP is the SMTP client address Postfix sends as rip=.
+	clientIP string
 	// username is set once the LOGIN mechanism has received it.
 	username  string
 	startTime time.Time
@@ -240,18 +245,32 @@ func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, writer *bufi
 
 	// Postfix sends resp= only if the SMTP client supplied an initial
 	// response, and forwards it unchanged. RFC 4954 encodes a zero-length
-	// initial response as "=".
+	// initial response as "=". secured is set when the SMTP session uses TLS.
 	var initialResponse string
 	hasInitialResponse := false
+	secured := false
 	for _, p := range parts[3:] {
 		if v, ok := strings.CutPrefix(p, "resp="); ok {
 			initialResponse = v
 			hasInitialResponse = true
-			break
+		} else if v, ok := strings.CutPrefix(p, "rip="); ok {
+			req.clientIP = v
+		} else if p == "secured" {
+			secured = true
 		}
 	}
 	if initialResponse == "=" {
 		initialResponse = ""
+	}
+
+	// Checked before any challenge, so the client never sends the
+	// password over the unencrypted session.
+	if s.requireTLS && !secured {
+		s.logger.Info("authentication without TLS rejected",
+			zap.String("mechanism", req.mechanism), zap.String("client", req.clientIP))
+		s.recordAuthResult(req.mechanism, "insecure", req.startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Plaintext authentication disallowed without TLS", req.id))
+		return nil
 	}
 
 	switch req.mechanism {
@@ -319,7 +338,7 @@ func (s *SASLServer) finishPlain(ctx context.Context, conn net.Conn, writer *buf
 		return
 	}
 
-	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, email, password, req.startTime)
+	s.authenticateAndRespond(ctx, conn, writer, req, email, password)
 }
 
 // continueLogin advances the LOGIN mechanism by one step.
@@ -352,13 +371,14 @@ func (s *SASLServer) continueLogin(ctx context.Context, conn net.Conn, writer *b
 		return nil
 	}
 
-	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, req.username, string(decoded), req.startTime)
+	s.authenticateAndRespond(ctx, conn, writer, req, req.username, string(decoded))
 	return nil
 }
 
 // failParse rejects a request whose client data could not be parsed.
 func (s *SASLServer) failParse(conn net.Conn, writer *bufio.Writer, req *pendingAuth, err error) {
-	s.logger.Info("auth parsing failed", zap.String("mechanism", req.mechanism), zap.Error(err))
+	s.logger.Info("auth parsing failed",
+		zap.String("mechanism", req.mechanism), zap.String("client", req.clientIP), zap.Error(err))
 	s.recordAuthResult(req.mechanism, "error", req.startTime)
 	s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", req.id, saslFailReason))
 }
@@ -389,7 +409,7 @@ func parsePlainResponse(respB64 string) (string, string, error) {
 }
 
 // authenticateAndRespond calls the Userli API and writes the auth result.
-func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
+func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, req *pendingAuth, email, password string) {
 	result, err := s.client.Authenticate(ctx, email, password)
 	if err != nil {
 		// Fail-closed, but as a temporary failure: Postfix ignores the
@@ -397,8 +417,8 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 		// which makes mail clients ask for a new password. Only a lost
 		// connection makes smtpd reply 454; it reconnects on the next AUTH.
 		s.logger.Error("authentication API error",
-			zap.String("email", email), zap.Error(err))
-		s.recordAuthResult(mechanism, "error", startTime)
+			zap.String("email", email), zap.String("client", req.clientIP), zap.Error(err))
+		s.recordAuthResult(req.mechanism, "error", req.startTime)
 		_ = conn.Close()
 		return
 	}
@@ -413,13 +433,15 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 		if username == "" {
 			username = email
 		}
-		s.logger.Info("authentication successful", zap.String("email", username))
-		s.recordAuthResult(mechanism, "success", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", id, sanitizeField(username)))
+		s.logger.Info("authentication successful",
+			zap.String("email", username), zap.String("client", req.clientIP))
+		s.recordAuthResult(req.mechanism, "success", req.startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", req.id, sanitizeField(username)))
 	} else {
-		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", result.Message))
-		s.recordAuthResult(mechanism, "invalid_credentials", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), saslFailReason))
+		s.logger.Info("authentication failed",
+			zap.String("email", email), zap.String("client", req.clientIP), zap.String("reason", result.Message))
+		s.recordAuthResult(req.mechanism, "invalid_credentials", req.startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", req.id, sanitizeField(email), saslFailReason))
 	}
 }
 

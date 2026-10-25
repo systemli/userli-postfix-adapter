@@ -77,7 +77,7 @@ func main() {
 	go StartPolicyServer(ctx, &wg, config.PolicyListenAddr, policyServer)
 
 	if config.SASLListenAddr != "" {
-		saslServer := NewSASLServer(userli, logger.Named("sasl"))
+		saslServer := NewSASLServer(userli, logger.Named("sasl"), config.SASLRequireTLS)
 		wg.Add(1)
 		go StartSASLServer(ctx, &wg, config.SASLListenAddr, config.SASLSocketMode, saslServer)
 	}
