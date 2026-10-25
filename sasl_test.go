@@ -266,19 +266,25 @@ func TestSASL_PlainAuth_APIError(t *testing.T) {
 	mockService.AssertExpectations(t)
 }
 
-func TestSASL_PlainAuth_MissingResp(t *testing.T) {
+// TestSASL_PlainAuth_WithoutInitialResponse covers clients that send
+// "AUTH PLAIN" and wait for an empty 334 challenge before the credentials.
+func TestSASL_PlainAuth_WithoutInitialResponse(t *testing.T) {
 	logger = zap.NewNop()
 	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
 	addr, _ := startSASLTestServer(t, mockService)
 
 	h := newSASLTestHelper(t, addr)
 	defer h.close()
 	h.doHandshake()
 
-	// Send PLAIN without resp= parameter
 	h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tnologin")
-	resp := h.readLine()
-	assert.True(t, strings.HasPrefix(resp, "FAIL\t1\t"))
+	assert.Equal(t, "CONT\t1\t", h.readLine())
+
+	payload := base64.StdEncoding.EncodeToString([]byte("\x00user@example.org\x00secret"))
+	h.writeLine("CONT\t1\t" + payload)
+	assert.Equal(t, "OK\t1\tuser=user@example.org", h.readLine())
+	mockService.AssertExpectations(t)
 }
 
 func TestSASL_PlainAuth_InvalidBase64(t *testing.T) {
@@ -307,6 +313,83 @@ func TestSASL_LoginAuth_Success(t *testing.T) {
 
 	resp := h.sendLoginAuth("1", "user@example.org", "secret")
 	assert.Equal(t, "OK\t1\tuser=user@example.org", resp)
+	mockService.AssertExpectations(t)
+}
+
+// TestSASL_LoginAuth_WithInitialResponse covers "AUTH LOGIN <b64 user>":
+// Postfix forwards the username as resp=, so the server must go straight
+// to the password challenge.
+func TestSASL_LoginAuth_WithInitialResponse(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	username := base64.StdEncoding.EncodeToString([]byte("user@example.org"))
+	h.writeLine("AUTH\t1\tLOGIN\tservice=smtp\tnologin\tresp=" + username)
+	assert.Equal(t, "CONT\t1\t"+base64.StdEncoding.EncodeToString([]byte("Password:")), h.readLine())
+
+	h.writeLine("CONT\t1\t" + base64.StdEncoding.EncodeToString([]byte("secret")))
+	assert.Equal(t, "OK\t1\tuser=user@example.org", h.readLine())
+	mockService.AssertExpectations(t)
+}
+
+// TestSASL_LoginAuth_AbandonedThenNewAuth reproduces an SMTP client that
+// aborts or disconnects mid-LOGIN. smtpd does not tell the auth server, so
+// the next line on the socket is a new AUTH, which must be answered with
+// its own id instead of being consumed as the missing CONT.
+func TestSASL_LoginAuth_AbandonedThenNewAuth(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	h.writeLine("AUTH\t1\tLOGIN\tservice=smtp\tnologin")
+	require.True(t, strings.HasPrefix(h.readLine(), "CONT\t1\t"))
+	h.writeLine("CONT\t1\t" + base64.StdEncoding.EncodeToString([]byte("attacker@example.org")))
+	require.True(t, strings.HasPrefix(h.readLine(), "CONT\t1\t"))
+
+	// Client went away; the next session of this smtpd process authenticates.
+	resp := h.sendPlainAuth("2", "user@example.org", "secret")
+	assert.Equal(t, "OK\t2\tuser=user@example.org", resp)
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_Cont_UnknownID(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	h.writeLine("CONT\t7\t" + base64.StdEncoding.EncodeToString([]byte("secret")))
+	assert.True(t, strings.HasPrefix(h.readLine(), "FAIL\t7\t"))
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_Cont_Aborted(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	h.writeLine("AUTH\t1\tLOGIN\tservice=smtp\tnologin")
+	require.True(t, strings.HasPrefix(h.readLine(), "CONT\t1\t"))
+	h.writeLine("CONT\t1\t*")
+	assert.Equal(t, "FAIL\t1\treason=Authentication aborted", h.readLine())
 	mockService.AssertExpectations(t)
 }
 

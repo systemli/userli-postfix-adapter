@@ -25,6 +25,12 @@ import (
 // of a clean FAIL. It is a var (not const) so tests can shorten it.
 var saslIdleTimeout = 360 * time.Second
 
+// LOGIN mechanism challenges, base64-encoded.
+var (
+	loginUsernameChallenge = base64.StdEncoding.EncodeToString([]byte("Username:"))
+	loginPasswordChallenge = base64.StdEncoding.EncodeToString([]byte("Password:"))
+)
+
 // SASLServer implements the Dovecot SASL authentication protocol.
 // It acts as a Dovecot auth server so Postfix can authenticate SMTP
 // clients via smtpd_sasl_type=dovecot without requiring Dovecot itself.
@@ -86,6 +92,13 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 	// reuse the cached auth socket across smtpd sessions without us
 	// closing it mid-cache (which produces 454 Connection lost on the
 	// next AUTH instead of a clean FAIL).
+	//
+	// Multi-step mechanisms are tracked in pending instead of blocking on
+	// the next line: smtpd never tells the auth server when an SMTP client
+	// aborts (`*`) or disconnects mid-exchange, so the next line on this
+	// socket may be a fresh AUTH from another session of the same smtpd
+	// process rather than the CONT we asked for.
+	var pending *pendingAuth
 	for {
 		if ctx.Err() != nil {
 			return
@@ -111,11 +124,27 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 
 		switch parts[0] {
 		case "AUTH":
-			s.handleAuth(ctx, conn, reader, writer, parts)
+			if pending != nil {
+				s.logger.Debug("abandoning unfinished auth request",
+					zap.String("id", pending.id), zap.String("mechanism", pending.mechanism))
+				s.recordAuthResult(pending.mechanism, "aborted", pending.startTime)
+			}
+			pending = s.handleAuth(ctx, conn, writer, parts)
+		case "CONT":
+			pending = s.handleCont(ctx, conn, writer, pending, parts)
 		default:
 			s.logger.Debug("ignoring unknown command", zap.String("command", parts[0]))
 		}
 	}
+}
+
+// pendingAuth is an AUTH request waiting for a CONT from the client.
+type pendingAuth struct {
+	id        string
+	mechanism string
+	// username is set once the LOGIN mechanism has received it.
+	username  string
+	startTime time.Time
 }
 
 // sendHandshake sends the Dovecot auth server handshake.
@@ -184,62 +213,147 @@ func (s *SASLServer) readClientHandshake(conn net.Conn, reader *bufio.Reader) er
 	}
 }
 
-// handleAuth processes an AUTH request and sends OK or FAIL.
-func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, parts []string) {
+// handleAuth processes an AUTH request. It either answers with OK/FAIL
+// right away or sends a CONT challenge and returns the request state
+// that the following CONT continues.
+func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, writer *bufio.Writer, parts []string) *pendingAuth {
 	// AUTH\t<id>\t<mechanism>\t[params...]
 	if len(parts) < 3 {
 		s.writeResponse(conn, writer, "FAIL\t0\treason=Invalid AUTH request")
-		return
+		return nil
 	}
 
-	id := parts[1]
-	mechanism := strings.ToUpper(parts[2])
-
-	startTime := time.Now()
-
-	var email, password string
-	var err error
-
-	switch mechanism {
-	case "PLAIN":
-		email, password, err = s.parsePlainAuth(parts)
-	case "LOGIN":
-		email, password, err = s.handleLoginAuth(id, conn, reader, writer)
-	default:
-		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Unsupported mechanism", id))
-		return
+	req := &pendingAuth{
+		id:        parts[1],
+		mechanism: strings.ToUpper(parts[2]),
+		startTime: time.Now(),
 	}
 
-	if err != nil {
-		s.logger.Info("auth parsing failed", zap.String("mechanism", mechanism), zap.Error(err))
-		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", id, sanitizeField(err.Error())))
-		return
-	}
-
-	s.authenticateAndRespond(ctx, conn, writer, id, mechanism, email, password, startTime)
-}
-
-// parsePlainAuth extracts email and password from a PLAIN AUTH request.
-// The resp= parameter contains base64-encoded "\x00user\x00password".
-func (s *SASLServer) parsePlainAuth(parts []string) (string, string, error) {
-	var respB64 string
-
+	// Postfix sends resp= only if the SMTP client supplied an initial
+	// response. An empty one ("AUTH PLAIN =") is treated like none.
+	var initialResponse string
 	for _, p := range parts[3:] {
-		if strings.HasPrefix(p, "resp=") {
-			respB64 = strings.TrimPrefix(p, "resp=")
+		if v, ok := strings.CutPrefix(p, "resp="); ok {
+			initialResponse = v
 			break
 		}
 	}
 
-	if respB64 == "" {
-		return "", "", fmt.Errorf("missing resp= parameter")
+	switch req.mechanism {
+	case "PLAIN":
+		if initialResponse == "" {
+			// RFC 4616: request the credentials with an empty challenge.
+			s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t", req.id))
+			return req
+		}
+		s.finishPlain(ctx, conn, writer, req, initialResponse)
+		return nil
+	case "LOGIN":
+		if initialResponse == "" {
+			s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", req.id, loginUsernameChallenge))
+			return req
+		}
+		return s.continueLogin(ctx, conn, writer, req, initialResponse)
+	default:
+		s.recordAuthResult(req.mechanism, "error", req.startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Unsupported mechanism", req.id))
+		return nil
+	}
+}
+
+// handleCont processes a CONT line for the pending request and returns the
+// request state that remains pending afterwards.
+func (s *SASLServer) handleCont(ctx context.Context, conn net.Conn, writer *bufio.Writer, req *pendingAuth, parts []string) *pendingAuth {
+	// CONT\t<id>\t<base64 data>
+	if len(parts) < 3 {
+		s.writeResponse(conn, writer, "FAIL\t0\treason=Invalid CONT request")
+		return req
 	}
 
+	id := parts[1]
+	if req == nil || req.id != id {
+		// Answer anyway: Postfix blocks until it reads a reply for this id.
+		s.logger.Debug("CONT for unknown auth request", zap.String("id", id))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Unexpected CONT", sanitizeField(id)))
+		return req
+	}
+
+	data := parts[2]
+	if data == "*" {
+		s.recordAuthResult(req.mechanism, "aborted", req.startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=Authentication aborted", req.id))
+		return nil
+	}
+
+	switch req.mechanism {
+	case "PLAIN":
+		s.finishPlain(ctx, conn, writer, req, data)
+		return nil
+	case "LOGIN":
+		return s.continueLogin(ctx, conn, writer, req, data)
+	default:
+		return nil
+	}
+}
+
+// finishPlain decodes a PLAIN response and authenticates it.
+func (s *SASLServer) finishPlain(ctx context.Context, conn net.Conn, writer *bufio.Writer, req *pendingAuth, respB64 string) {
+	email, password, err := parsePlainResponse(respB64)
+	if err != nil {
+		s.failParse(conn, writer, req, err)
+		return
+	}
+
+	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, email, password, req.startTime)
+}
+
+// continueLogin advances the LOGIN mechanism by one step.
+//
+// Flow:
+//
+//	S: CONT\t<id>\t<base64("Username:")>   (skipped if AUTH carried resp=)
+//	C: CONT\t<id>\t<base64(username)>
+//	S: CONT\t<id>\t<base64("Password:")>
+//	C: CONT\t<id>\t<base64(password)>
+func (s *SASLServer) continueLogin(ctx context.Context, conn net.Conn, writer *bufio.Writer, req *pendingAuth, dataB64 string) *pendingAuth {
+	decoded, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		s.failParse(conn, writer, req, fmt.Errorf("invalid base64 in LOGIN response"))
+		return nil
+	}
+
+	if req.username == "" {
+		if len(decoded) == 0 {
+			s.failParse(conn, writer, req, fmt.Errorf("empty username or password"))
+			return nil
+		}
+		req.username = string(decoded)
+		s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", req.id, loginPasswordChallenge))
+		return req
+	}
+
+	if len(decoded) == 0 {
+		s.failParse(conn, writer, req, fmt.Errorf("empty username or password"))
+		return nil
+	}
+
+	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, req.username, string(decoded), req.startTime)
+	return nil
+}
+
+// failParse rejects a request whose client data could not be parsed.
+func (s *SASLServer) failParse(conn net.Conn, writer *bufio.Writer, req *pendingAuth, err error) {
+	s.logger.Info("auth parsing failed", zap.String("mechanism", req.mechanism), zap.Error(err))
+	s.recordAuthResult(req.mechanism, "error", req.startTime)
+	s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", req.id, sanitizeField(err.Error())))
+}
+
+// parsePlainResponse extracts email and password from a base64-encoded
+// PLAIN response ("\x00user\x00password").
+func parsePlainResponse(respB64 string) (string, string, error) {
 	decoded, err := base64.StdEncoding.DecodeString(respB64)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid base64 in resp=")
+		return "", "", fmt.Errorf("invalid base64 in PLAIN response")
 	}
 
 	// RFC 4616: authzid \x00 authcid \x00 passwd
@@ -251,68 +365,6 @@ func (s *SASLServer) parsePlainAuth(parts []string) (string, string, error) {
 
 	email := nullParts[1]
 	password := nullParts[2]
-
-	if email == "" || password == "" {
-		return "", "", fmt.Errorf("empty username or password")
-	}
-
-	return email, password, nil
-}
-
-// handleLoginAuth handles the LOGIN mechanism using CONT roundtrips.
-//
-// Flow:
-//
-//	S: CONT\t<id>\t<base64("Username:")>
-//	C: CONT\t<id>\t<base64(username)>
-//	S: CONT\t<id>\t<base64("Password:")>
-//	C: CONT\t<id>\t<base64(password)>
-func (s *SASLServer) handleLoginAuth(id string, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) (string, string, error) {
-	// Send Username challenge
-	usernameChallenge := base64.StdEncoding.EncodeToString([]byte("Username:"))
-	s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", id, usernameChallenge))
-
-	// Read username response
-	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read LOGIN username: %w", err)
-	}
-	line = strings.TrimRight(line, "\r\n")
-
-	contParts := strings.SplitN(line, "\t", 3)
-	if len(contParts) < 3 || contParts[0] != "CONT" {
-		return "", "", fmt.Errorf("expected CONT response for username")
-	}
-
-	usernameBytes, err := base64.StdEncoding.DecodeString(contParts[2])
-	if err != nil {
-		return "", "", fmt.Errorf("invalid base64 in LOGIN username")
-	}
-	email := string(usernameBytes)
-
-	// Send Password challenge
-	passwordChallenge := base64.StdEncoding.EncodeToString([]byte("Password:"))
-	s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", id, passwordChallenge))
-
-	// Read password response
-	_ = conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-	line, err = reader.ReadString('\n')
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read LOGIN password: %w", err)
-	}
-	line = strings.TrimRight(line, "\r\n")
-
-	contParts = strings.SplitN(line, "\t", 3)
-	if len(contParts) < 3 || contParts[0] != "CONT" {
-		return "", "", fmt.Errorf("expected CONT response for password")
-	}
-
-	passwordBytes, err := base64.StdEncoding.DecodeString(contParts[2])
-	if err != nil {
-		return "", "", fmt.Errorf("invalid base64 in LOGIN password")
-	}
-	password := string(passwordBytes)
 
 	if email == "" || password == "" {
 		return "", "", fmt.Errorf("empty username or password")
