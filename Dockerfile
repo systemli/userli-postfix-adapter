@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine3.19 AS build
+FROM golang:1.27-alpine AS build
 
 ENV USER=appuser
 ENV UID=10001
