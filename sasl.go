@@ -17,14 +17,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// saslIdleTimeout bounds how long the AUTH loop waits for the next request
-// on a persistent connection. Postfix' xsasl_dovecot client caches the
-// auth socket per smtpd worker up to smtpd_timeout (default 300s); closing
-// earlier leaves Postfix with a half-open socket and produces
-// `454 Connection lost to authentication server` on the next AUTH instead
-// of a clean FAIL. It is a var (not const) so tests can shorten it.
-var saslIdleTimeout = 360 * time.Second
-
 // LOGIN mechanism challenges, base64-encoded.
 var (
 	loginUsernameChallenge = base64.StdEncoding.EncodeToString([]byte("Username:"))
@@ -38,6 +30,13 @@ const saslMaxLineLength = 16 * 1024
 
 // errLineTooLong is returned when a protocol line exceeds saslMaxLineLength.
 var errLineTooLong = errors.New("line too long")
+
+// saslFailReason is the only reason reported for rejected credentials.
+// smtpd passes it verbatim to the SMTP client ("535 5.7.8 Error:
+// authentication failed: <reason>"), and Userli reports account states
+// such as a spam lock before checking the password, so anything more
+// specific would reveal them to unauthenticated clients.
+const saslFailReason = "authentication failed"
 
 // SASLServer implements the Dovecot SASL authentication protocol.
 // It acts as a Dovecot auth server so Postfix can authenticate SMTP
@@ -97,31 +96,31 @@ func (s *SASLServer) HandleConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Handle AUTH requests in a loop (persistent connection). Use the
-	// longer saslIdleTimeout here so Postfix' xsasl_dovecot client can
-	// reuse the cached auth socket across smtpd sessions without us
-	// closing it mid-cache (which produces 454 Connection lost on the
-	// next AUTH instead of a clean FAIL).
+	// Handle AUTH requests in a loop (persistent connection). Postfix'
+	// xsasl_dovecot client keeps the auth socket open for the lifetime of
+	// the smtpd process, which can be idle for any time between two AUTHs.
+	// It only reconnects if writing the AUTH fails, and on a TCP socket
+	// writing to a connection we closed succeeds, so any idle timeout here
+	// ends in `454 Connection lost to authentication server`. Wait without
+	// a deadline and close the connection on shutdown instead.
 	//
 	// Multi-step mechanisms are tracked in pending instead of blocking on
 	// the next line: smtpd never tells the auth server when an SMTP client
 	// aborts (`*`) or disconnects mid-exchange, so the next line on this
 	// socket may be a fresh AUTH from another session of the same smtpd
 	// process rather than the CONT we asked for.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	_ = conn.SetReadDeadline(time.Time{})
+
 	var pending *pendingAuth
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 
-		_ = conn.SetReadDeadline(time.Now().Add(saslIdleTimeout))
-
 		line, err := readLine(reader)
 		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				return
-			}
 			s.logger.Debug("failed to read AUTH request", zap.Error(err))
 			return
 		}
@@ -240,18 +239,24 @@ func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, writer *bufi
 	}
 
 	// Postfix sends resp= only if the SMTP client supplied an initial
-	// response. An empty one ("AUTH PLAIN =") is treated like none.
+	// response, and forwards it unchanged. RFC 4954 encodes a zero-length
+	// initial response as "=".
 	var initialResponse string
+	hasInitialResponse := false
 	for _, p := range parts[3:] {
 		if v, ok := strings.CutPrefix(p, "resp="); ok {
 			initialResponse = v
+			hasInitialResponse = true
 			break
 		}
+	}
+	if initialResponse == "=" {
+		initialResponse = ""
 	}
 
 	switch req.mechanism {
 	case "PLAIN":
-		if initialResponse == "" {
+		if !hasInitialResponse {
 			// RFC 4616: request the credentials with an empty challenge.
 			s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t", req.id))
 			return req
@@ -259,7 +264,7 @@ func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, writer *bufi
 		s.finishPlain(ctx, conn, writer, req, initialResponse)
 		return nil
 	case "LOGIN":
-		if initialResponse == "" {
+		if !hasInitialResponse {
 			s.writeResponse(conn, writer, fmt.Sprintf("CONT\t%s\t%s", req.id, loginUsernameChallenge))
 			return req
 		}
@@ -355,7 +360,7 @@ func (s *SASLServer) continueLogin(ctx context.Context, conn net.Conn, writer *b
 func (s *SASLServer) failParse(conn net.Conn, writer *bufio.Writer, req *pendingAuth, err error) {
 	s.logger.Info("auth parsing failed", zap.String("mechanism", req.mechanism), zap.Error(err))
 	s.recordAuthResult(req.mechanism, "error", req.startTime)
-	s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", req.id, sanitizeField(err.Error())))
+	s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\treason=%s", req.id, saslFailReason))
 }
 
 // parsePlainResponse extracts email and password from a base64-encoded
@@ -387,11 +392,14 @@ func parsePlainResponse(respB64 string) (string, string, error) {
 func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
 	result, err := s.client.Authenticate(ctx, email, password)
 	if err != nil {
-		// Fail-closed: API errors reject authentication
+		// Fail-closed, but as a temporary failure: Postfix ignores the
+		// Dovecot "temp" flag and answers every FAIL with a permanent 535,
+		// which makes mail clients ask for a new password. Only a lost
+		// connection makes smtpd reply 454; it reconnects on the next AUTH.
 		s.logger.Error("authentication API error",
 			zap.String("email", email), zap.Error(err))
 		s.recordAuthResult(mechanism, "error", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=Internal error", id, sanitizeField(email)))
+		_ = conn.Close()
 		return
 	}
 
@@ -409,13 +417,9 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 		s.recordAuthResult(mechanism, "success", startTime)
 		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", id, sanitizeField(username)))
 	} else {
-		reason := result.Message
-		if reason == "" {
-			reason = "authentication failed"
-		}
-		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", reason))
+		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", result.Message))
 		s.recordAuthResult(mechanism, "invalid_credentials", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), sanitizeField(reason)))
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), saslFailReason))
 	}
 }
 

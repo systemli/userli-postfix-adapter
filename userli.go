@@ -43,6 +43,11 @@ type Quota struct {
 	PerDay  int `json:"per_day"`
 }
 
+// DefaultAPITimeout bounds a whole Userli API call, including reading the
+// response body. It must stay below Postfix' 10s AUTH_TIMEOUT for the
+// Dovecot SASL client, so a slow API still produces a reply smtpd reads.
+const DefaultAPITimeout = 5 * time.Second
+
 type Userli struct {
 	token     string
 	baseURL   string
@@ -71,7 +76,7 @@ func WithTransport(transport *http.Transport) Option {
 		defer u.mu.Unlock()
 		u.Client = &http.Client{
 			Transport: transport,
-			Timeout:   time.Second * 10,
+			Timeout:   DefaultAPITimeout,
 		}
 	}
 }
@@ -140,7 +145,7 @@ func NewUserli(token, baseURL string, opts ...Option) *Userli {
 
 		u.Client = &http.Client{
 			Transport: transport,
-			Timeout:   time.Second * 10,
+			Timeout:   DefaultAPITimeout,
 		}
 	}
 
@@ -293,14 +298,6 @@ func (u *Userli) Authenticate(ctx context.Context, email, password string) (Auth
 
 func (u *Userli) call(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
 	startTime := time.Now()
-
-	// If the parent context already has a deadline, use it.
-	// Otherwise, set a default timeout of 5 seconds for API calls.
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-	}
 
 	var bodyReader *bytes.Reader
 	if body != nil {
