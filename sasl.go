@@ -35,14 +35,16 @@ var (
 // It acts as a Dovecot auth server so Postfix can authenticate SMTP
 // clients via smtpd_sasl_type=dovecot without requiring Dovecot itself.
 type SASLServer struct {
-	client UserliService
-	logger *zap.Logger
-	connID atomic.Uint64
+	client   UserliService
+	throttle *SASLThrottle
+	logger   *zap.Logger
+	connID   atomic.Uint64
 }
 
 // NewSASLServer creates a new SASLServer with the given UserliService.
-func NewSASLServer(client UserliService, logger *zap.Logger) *SASLServer {
-	return &SASLServer{client: client, logger: logger}
+// throttle may be nil to disable failure delay and per-IP limits.
+func NewSASLServer(client UserliService, throttle *SASLThrottle, logger *zap.Logger) *SASLServer {
+	return &SASLServer{client: client, throttle: throttle, logger: logger}
 }
 
 // StartSASLServer starts the SASL auth server on the given address.
@@ -143,7 +145,9 @@ type pendingAuth struct {
 	id        string
 	mechanism string
 	// username is set once the LOGIN mechanism has received it.
-	username  string
+	username string
+	// clientIP is the SMTP client address from rip=, used for throttling.
+	clientIP  string
 	startTime time.Time
 }
 
@@ -231,11 +235,13 @@ func (s *SASLServer) handleAuth(ctx context.Context, conn net.Conn, writer *bufi
 
 	// Postfix sends resp= only if the SMTP client supplied an initial
 	// response. An empty one ("AUTH PLAIN =") is treated like none.
+	// rip= carries the SMTP client address.
 	var initialResponse string
 	for _, p := range parts[3:] {
 		if v, ok := strings.CutPrefix(p, "resp="); ok {
 			initialResponse = v
-			break
+		} else if v, ok := strings.CutPrefix(p, "rip="); ok {
+			req.clientIP = v
 		}
 	}
 
@@ -304,7 +310,7 @@ func (s *SASLServer) finishPlain(ctx context.Context, conn net.Conn, writer *buf
 		return
 	}
 
-	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, email, password, req.startTime)
+	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, req.clientIP, email, password, req.startTime)
 }
 
 // continueLogin advances the LOGIN mechanism by one step.
@@ -337,7 +343,7 @@ func (s *SASLServer) continueLogin(ctx context.Context, conn net.Conn, writer *b
 		return nil
 	}
 
-	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, req.username, string(decoded), req.startTime)
+	s.authenticateAndRespond(ctx, conn, writer, req.id, req.mechanism, req.clientIP, req.username, string(decoded), req.startTime)
 	return nil
 }
 
@@ -374,7 +380,16 @@ func parsePlainResponse(respB64 string) (string, string, error) {
 }
 
 // authenticateAndRespond calls the Userli API and writes the auth result.
-func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
+func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, clientIP, email, password string, startTime time.Time) {
+	if s.throttle.Blocked(ctx, clientIP) {
+		s.logger.Info("authentication throttled",
+			zap.String("email", email), zap.String("client_ip", clientIP))
+		s.throttle.Delay(ctx)
+		s.recordAuthResult(mechanism, "throttled", startTime)
+		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=Too many failed attempts", id, sanitizeField(email)))
+		return
+	}
+
 	result, err := s.client.Authenticate(ctx, email, password)
 	if err != nil {
 		// Fail-closed: API errors reject authentication
@@ -404,6 +419,8 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 			reason = "authentication failed"
 		}
 		s.logger.Info("authentication failed", zap.String("email", email), zap.String("reason", reason))
+		s.throttle.RecordFailure(ctx, clientIP)
+		s.throttle.Delay(ctx)
 		s.recordAuthResult(mechanism, "invalid_credentials", startTime)
 		s.writeResponse(conn, writer, fmt.Sprintf("FAIL\t%s\tuser=%s\treason=%s", id, sanitizeField(email), sanitizeField(reason)))
 	}

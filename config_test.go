@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -54,6 +55,41 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":10002", config.MetricsListenAddr)
 		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
 		s.Equal("redis://localhost:6379/0", config.RedisURL)
+		s.Equal(2*time.Second, config.SASLFailureDelay)
+		s.Equal(10, config.SASLMaxFailures)
+		s.Equal(15*time.Minute, config.SASLFailureWindow)
+	})
+
+	s.Run("custom SASL throttle config", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+		s.T().Setenv("SASL_FAILURE_DELAY", "1s")
+		s.T().Setenv("SASL_MAX_FAILURES", "0")
+		s.T().Setenv("SASL_FAILURE_WINDOW", "1h")
+
+		config, err := NewConfig()
+
+		s.NoError(err)
+		s.Equal(time.Second, config.SASLFailureDelay)
+		s.Equal(0, config.SASLMaxFailures)
+		s.Equal(time.Hour, config.SASLFailureWindow)
+	})
+
+	s.Run("invalid SASL throttle config", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+
+		for env, value := range map[string]string{
+			"SASL_FAILURE_DELAY":  "10s",
+			"SASL_MAX_FAILURES":   "-1",
+			"SASL_FAILURE_WINDOW": "abc",
+		} {
+			s.T().Setenv(env, value)
+			config, err := NewConfig()
+			s.Nil(config, env)
+			s.ErrorContains(err, env)
+			os.Unsetenv(env)
+		}
 	})
 
 	s.Run("custom config", func() {

@@ -16,6 +16,9 @@ The adapter is configured via environment variables:
 - `SOCKETMAP_LISTEN_ADDR`: The address to listen on for socketmap requests. Default: `:10001`.
 - `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
 - `SASL_LISTEN_ADDR`: The address to listen on for Dovecot SASL authentication. Supports TCP (e.g., `:10006`) and UNIX sockets (e.g., `/var/spool/postfix/private/auth`). Default: empty (disabled).
+- `SASL_FAILURE_DELAY`: Delay before answering a failed SASL authentication. Accepts a [Go duration](https://pkg.go.dev/time#ParseDuration) between `0` and `4s`. Default: `2s`.
+- `SASL_MAX_FAILURES`: Number of failed SASL authentications per client IP (IPv6: per `/64`) within `SASL_FAILURE_WINDOW` after which further attempts are rejected without asking the Userli API. Default: `10`. Set to `0` to disable.
+- `SASL_FAILURE_WINDOW`: Window in which failed SASL authentications are counted per client IP. Default: `15m`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 - `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
 - `REDIS_URL`: Connection URL for Redis (required). Format follows [`redis.ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL), e.g. `redis://[user:password@]host:port/db`. Rate-limit state is stored in Redis so it survives restarts.
@@ -59,6 +62,8 @@ Rate-limit state is persisted to Redis (`REDIS_URL`) so it survives restarts. If
 The adapter implements the Dovecot SASL authentication protocol, so Postfix can authenticate SMTP clients via `smtpd_sasl_type=dovecot` without requiring Dovecot itself. Authentication is performed against the Userli API (`/api/postfix/auth`). Supported mechanisms: PLAIN and LOGIN.
 
 **Important:** SASL authentication is fail-closed. If the API is unreachable, authentication is rejected.
+
+Failed authentications are delayed by `SASL_FAILURE_DELAY` and counted per client IP in Redis. Once a client IP reaches `SASL_MAX_FAILURES` within `SASL_FAILURE_WINDOW`, further attempts are rejected without contacting the Userli API. Usernames are never locked out, so an attacker cannot block a legitimate user. Redis errors fail open.
 
 Configure in Postfix `main.cf` (TCP):
 
@@ -205,7 +210,7 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 **SASL Authentication Metrics:**
 
 - `userli_postfix_adapter_sasl_active_connections` - Active SASL connections gauge
-- `userli_postfix_adapter_sasl_auth_total` - Total SASL authentication attempts (by mechanism and result)
+- `userli_postfix_adapter_sasl_auth_total` - Total SASL authentication attempts (by mechanism and result: `success`, `invalid_credentials`, `throttled`, `error`)
 - `userli_postfix_adapter_sasl_auth_duration_seconds` - SASL authentication duration histogram
 - `userli_postfix_adapter_sasl_connection_pool_full_total` - SASL connection pool rejections
 

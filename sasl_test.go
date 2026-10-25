@@ -129,13 +129,19 @@ func (h *saslTestHelper) sendLoginAuth(id, email, password string) string {
 // The caller must cancel ctx to stop the server.
 func startSASLTestServer(t *testing.T, mockService *MockUserliService) (string, context.CancelFunc) {
 	t.Helper()
+	return startSASLTestServerWithThrottle(t, mockService, nil)
+}
+
+// startSASLTestServerWithThrottle is like startSASLTestServer with a throttle.
+func startSASLTestServerWithThrottle(t *testing.T, mockService *MockUserliService, throttle *SASLThrottle) (string, context.CancelFunc) {
+	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 	listener.Close()
 
-	server := NewSASLServer(mockService, zap.NewNop())
+	server := NewSASLServer(mockService, throttle, zap.NewNop())
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
@@ -641,5 +647,79 @@ func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 	assert.True(t, strings.HasPrefix(resp, "FAIL\t2\t"),
 		"server must accept AUTH after idle gap, got %q", resp)
 	assert.Contains(t, resp, "reason=authentication failed")
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_Throttle_RejectsWithoutAPICall(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
+		Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil).Once()
+	throttle, _ := newTestSASLThrottle(t, 0, 1)
+	addr, _ := startSASLTestServerWithThrottle(t, mockService, throttle)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	payload := base64.StdEncoding.EncodeToString([]byte("\x00user@example.org\x00wrong"))
+	h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tnologin\trip=192.0.2.1\tresp=" + payload)
+	assert.Equal(t, "FAIL\t1\tuser=user@example.org\treason=authentication failed", h.readLine())
+
+	// Over the limit: rejected before reaching the API, even with other credentials.
+	payload = base64.StdEncoding.EncodeToString([]byte("\x00other@example.org\x00secret"))
+	h.writeLine("AUTH\t2\tPLAIN\tservice=smtp\tnologin\trip=192.0.2.1\tresp=" + payload)
+	resp := h.readLine()
+	assert.Equal(t, "FAIL\t2\tuser=other@example.org\treason=Too many failed attempts", resp)
+	assertNoTempParameter(t, resp)
+
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_Throttle_DelaysFailures(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "wrong").
+		Return(AuthResult{Username: "user@example.org", Message: "authentication failed"}, nil)
+	mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
+		Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+	throttle, _ := newTestSASLThrottle(t, 200*time.Millisecond, 0)
+	addr, _ := startSASLTestServerWithThrottle(t, mockService, throttle)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	start := time.Now()
+	h.sendPlainAuth("1", "user@example.org", "wrong")
+	assert.GreaterOrEqual(t, time.Since(start), 200*time.Millisecond, "failures must be delayed")
+
+	start = time.Now()
+	h.sendPlainAuth("2", "user@example.org", "secret")
+	assert.Less(t, time.Since(start), 200*time.Millisecond, "successes must not be delayed")
+
+	mockService.AssertExpectations(t)
+}
+
+// TestSASL_Throttle_LoginKeepsClientIP verifies that rip= from the AUTH line
+// is still applied when LOGIN finishes on a later CONT.
+func TestSASL_Throttle_LoginKeepsClientIP(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	throttle, _ := newTestSASLThrottle(t, 0, 1)
+	throttle.RecordFailure(context.Background(), "192.0.2.1")
+	addr, _ := startSASLTestServerWithThrottle(t, mockService, throttle)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	h.writeLine("AUTH\t1\tLOGIN\tservice=smtp\tnologin\trip=192.0.2.1")
+	require.True(t, strings.HasPrefix(h.readLine(), "CONT\t1\t"))
+	h.writeLine("CONT\t1\t" + base64.StdEncoding.EncodeToString([]byte("user@example.org")))
+	require.True(t, strings.HasPrefix(h.readLine(), "CONT\t1\t"))
+	h.writeLine("CONT\t1\t" + base64.StdEncoding.EncodeToString([]byte("secret")))
+
+	assert.Equal(t, "FAIL\t1\tuser=user@example.org\treason=Too many failed attempts", h.readLine())
 	mockService.AssertExpectations(t)
 }
