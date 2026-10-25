@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -140,7 +142,7 @@ func startSASLTestServer(t *testing.T, mockService *MockUserliService) (string, 
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go StartSASLServer(ctx, &wg, addr, server)
+	go StartSASLServer(ctx, &wg, addr, 0, server)
 
 	// Wait for server to be ready
 	time.Sleep(100 * time.Millisecond)
@@ -642,4 +644,57 @@ func TestSASL_PersistentConnection_SurvivesIdleGap(t *testing.T) {
 		"server must accept AUTH after idle gap, got %q", resp)
 	assert.Contains(t, resp, "reason=authentication failed")
 	mockService.AssertExpectations(t)
+}
+
+func TestSASL_LineTooLong_ClosesConnection(t *testing.T) {
+	logger = zap.NewNop()
+	mockService := &MockUserliService{}
+	addr, _ := startSASLTestServer(t, mockService)
+
+	h := newSASLTestHelper(t, addr)
+	defer h.close()
+	h.doHandshake()
+
+	h.writeLine("AUTH\t1\tPLAIN\tresp=" + strings.Repeat("A", saslMaxLineLength))
+
+	h.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err := h.reader.ReadString('\n')
+	assert.ErrorIs(t, err, io.EOF, "server must close connections sending oversized lines")
+	mockService.AssertExpectations(t)
+}
+
+func TestSASL_UnixSocket_Mode(t *testing.T) {
+	logger = zap.NewNop()
+
+	dir, err := os.MkdirTemp("", "sasl")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	addr := filepath.Join(dir, "auth")
+
+	server := NewSASLServer(&MockUserliService{}, zap.NewNop())
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go StartSASLServer(ctx, &wg, addr, 0600, server)
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+
+	require.Eventually(t, func() bool {
+		info, err := os.Stat(addr)
+		return err == nil && info.Mode().Perm() == 0600
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestReadLine(t *testing.T) {
+	line, err := readLine(bufio.NewReaderSize(strings.NewReader(strings.Repeat("a", 5000)+"\nrest"), 16))
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("a", 5000)+"\n", line)
+
+	_, err = readLine(bufio.NewReaderSize(strings.NewReader(strings.Repeat("a", saslMaxLineLength)+"\n"), 16))
+	assert.ErrorIs(t, err, errLineTooLong)
+
+	_, err = readLine(bufio.NewReader(strings.NewReader("no newline")))
+	assert.ErrorIs(t, err, io.EOF)
 }

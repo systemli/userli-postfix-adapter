@@ -54,6 +54,30 @@ func (s *ConfigTestSuite) TestNewConfig() {
 		s.Equal(":10002", config.MetricsListenAddr)
 		s.Equal("Rate limit exceeded, please try again later", config.RateLimitMessage)
 		s.Equal("redis://localhost:6379/0", config.RedisURL)
+		s.Equal(os.FileMode(0666), config.SASLSocketMode)
+	})
+
+	s.Run("custom SASL socket mode", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+		s.T().Setenv("SASL_SOCKET_MODE", "0660")
+
+		config, err := NewConfig()
+
+		s.NoError(err)
+		s.Equal(os.FileMode(0660), config.SASLSocketMode)
+	})
+
+	s.Run("invalid SASL socket mode", func() {
+		s.T().Setenv("USERLI_TOKEN", "token")
+		s.T().Setenv("REDIS_URL", "redis://localhost:6379/0")
+
+		for _, value := range []string{"rw-rw----", "0", "1777", "999"} {
+			s.T().Setenv("SASL_SOCKET_MODE", value)
+			config, err := NewConfig()
+			s.Nil(config, value)
+			s.ErrorContains(err, "SASL_SOCKET_MODE", value)
+		}
 	})
 
 	s.Run("custom config", func() {

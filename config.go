@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -45,6 +46,9 @@ type Config struct {
 	// Supports TCP (e.g. ":10004") or UNIX socket (e.g. "/var/spool/postfix/private/auth").
 	// Leave empty to disable the SASL auth server.
 	SASLListenAddr string
+
+	// SASLSocketMode is the permission mode of the SASL UNIX socket.
+	SASLSocketMode os.FileMode
 }
 
 // NewConfig creates a new Config with default values.
@@ -100,6 +104,15 @@ func NewConfig() (*Config, error) {
 
 	saslListenAddr := os.Getenv("SASL_LISTEN_ADDR")
 
+	saslSocketMode := DefaultSocketMode
+	if raw := os.Getenv("SASL_SOCKET_MODE"); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 8, 32)
+		if err != nil || parsed == 0 || parsed > 0777 {
+			return nil, fmt.Errorf("SASL_SOCKET_MODE must be an octal permission mode like 0660")
+		}
+		saslSocketMode = os.FileMode(parsed)
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -111,5 +124,6 @@ func NewConfig() (*Config, error) {
 		RedisURL:                  redisURL,
 		LookupCacheTTL:            lookupCacheTTL,
 		SASLListenAddr:            saslListenAddr,
+		SASLSocketMode:            saslSocketMode,
 	}, nil
 }
