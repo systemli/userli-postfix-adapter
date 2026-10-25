@@ -312,7 +312,7 @@ func (s *UserliTestSuite) TestWithTransport() {
 		userli.mu.RUnlock()
 
 		s.Equal(customTransport, transport)
-		s.Equal(10*time.Second, userli.Client.Timeout) // 10 seconds in nanoseconds
+		s.Equal(DefaultAPITimeout, userli.Client.Timeout)
 	})
 }
 
