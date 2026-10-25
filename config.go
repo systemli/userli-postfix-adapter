@@ -49,6 +49,9 @@ type Config struct {
 
 	// SASLSocketMode is the permission mode of the SASL UNIX socket.
 	SASLSocketMode os.FileMode
+
+	// SASLRequireTLS rejects SASL authentication in SMTP sessions without TLS.
+	SASLRequireTLS bool
 }
 
 // NewConfig creates a new Config with default values.
@@ -113,6 +116,15 @@ func NewConfig() (*Config, error) {
 		saslSocketMode = os.FileMode(parsed)
 	}
 
+	saslRequireTLS := false
+	if raw := os.Getenv("SASL_REQUIRE_TLS"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("SASL_REQUIRE_TLS must be a boolean like true or false")
+		}
+		saslRequireTLS = parsed
+	}
+
 	return &Config{
 		UserliBaseURL:             userliBaseURL,
 		UserliToken:               userliToken,
@@ -125,5 +137,6 @@ func NewConfig() (*Config, error) {
 		LookupCacheTTL:            lookupCacheTTL,
 		SASLListenAddr:            saslListenAddr,
 		SASLSocketMode:            saslSocketMode,
+		SASLRequireTLS:            saslRequireTLS,
 	}, nil
 }

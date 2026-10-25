@@ -17,6 +17,7 @@ The adapter is configured via environment variables:
 - `POLICY_LISTEN_ADDR`: The address to listen on for policy requests (rate limiting). Default: `:10003`.
 - `SASL_LISTEN_ADDR`: The address to listen on for Dovecot SASL authentication. Supports TCP (e.g., `:10006`) and UNIX sockets (e.g., `/var/spool/postfix/private/auth`). Default: empty (disabled).
 - `SASL_SOCKET_MODE`: Octal permission mode of the SASL UNIX socket (e.g. `0660`). Default: `0666`.
+- `SASL_REQUIRE_TLS`: Reject SASL authentication in SMTP sessions without TLS (like Dovecot's `disable_plaintext_auth`). Default: `false`.
 - `METRICS_LISTEN_ADDR`: The address to listen on for metrics. Default: `:10002`.
 - `RATE_LIMIT_MESSAGE`: The rejection message returned when a sender exceeds their quota. Default: `Rate limit exceeded, please try again later`.
 - `REDIS_URL`: Connection URL for Redis (required). Format follows [`redis.ParseURL`](https://pkg.go.dev/github.com/redis/go-redis/v9#ParseURL), e.g. `redis://[user:password@]host:port/db`. Rate-limit state is stored in Redis so it survives restarts.
@@ -82,7 +83,7 @@ smtpd_sasl_auth_enable = yes
 **Security considerations:**
 
 - The SASL socket answers any client that can reach it, so it can be used to test passwords without going through Postfix (and its TLS and client restrictions). Bind TCP listeners to `localhost` or a private network only, and keep UNIX sockets inside Postfix' `private/` directory or restrict them with `SASL_SOCKET_MODE`.
-- The adapter announces PLAIN and LOGIN as plaintext mechanisms and does not enforce TLS itself. Set `smtpd_tls_auth_only = yes` so Postfix offers AUTH only after STARTTLS.
+- The adapter announces PLAIN and LOGIN as plaintext mechanisms. Set `smtpd_tls_auth_only = yes` so Postfix offers AUTH only after STARTTLS. As a second line of defense, set `SASL_REQUIRE_TLS=true` to reject AUTH requests that Postfix marks as coming from a session without TLS.
 
 **Brute-force protection:**
 

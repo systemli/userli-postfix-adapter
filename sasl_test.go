@@ -131,13 +131,18 @@ func (h *saslTestHelper) sendLoginAuth(id, email, password string) string {
 // The caller must cancel ctx to stop the server.
 func startSASLTestServer(t *testing.T, mockService *MockUserliService) (string, context.CancelFunc) {
 	t.Helper()
+	return startSASLTestServerWith(t, NewSASLServer(mockService, zap.NewNop(), false))
+}
+
+// startSASLTestServerWith starts the given SASL server on a random port.
+func startSASLTestServerWith(t *testing.T, server *SASLServer) (string, context.CancelFunc) {
+	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 	listener.Close()
 
-	server := NewSASLServer(mockService, zap.NewNop())
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
@@ -270,6 +275,58 @@ func TestSASL_PlainAuth_APIError(t *testing.T) {
 	_, err := h.reader.ReadString('\n')
 	assert.ErrorIs(t, err, io.EOF, "server must close the connection on API errors")
 	mockService.AssertExpectations(t)
+}
+
+func TestSASL_RequireTLS(t *testing.T) {
+	plain := base64.StdEncoding.EncodeToString([]byte("\x00user@example.org\x00secret"))
+
+	t.Run("rejects AUTH without TLS before any challenge", func(t *testing.T) {
+		for _, mechanism := range []string{"PLAIN", "LOGIN"} {
+			logger = zap.NewNop()
+			mockService := &MockUserliService{}
+			addr, _ := startSASLTestServerWith(t, NewSASLServer(mockService, zap.NewNop(), true))
+
+			h := newSASLTestHelper(t, addr)
+			h.doHandshake()
+
+			h.writeLine("AUTH\t1\t" + mechanism + "\tservice=smtp\tnologin\tlip=127.0.0.1\trip=192.0.2.1")
+			assert.Equal(t, "FAIL\t1\treason=Plaintext authentication disallowed without TLS", h.readLine(), mechanism)
+			mockService.AssertExpectations(t)
+			h.close()
+		}
+	})
+
+	t.Run("accepts AUTH with TLS", func(t *testing.T) {
+		logger = zap.NewNop()
+		mockService := &MockUserliService{}
+		mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
+			Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+		addr, _ := startSASLTestServerWith(t, NewSASLServer(mockService, zap.NewNop(), true))
+
+		h := newSASLTestHelper(t, addr)
+		defer h.close()
+		h.doHandshake()
+
+		h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tnologin\tlip=127.0.0.1\trip=192.0.2.1\tsecured\tresp=" + plain)
+		assert.Equal(t, "OK\t1\tuser=user@example.org", h.readLine())
+		mockService.AssertExpectations(t)
+	})
+
+	t.Run("accepts AUTH without TLS when disabled", func(t *testing.T) {
+		logger = zap.NewNop()
+		mockService := &MockUserliService{}
+		mockService.On("Authenticate", mock.Anything, "user@example.org", "secret").
+			Return(AuthResult{OK: true, Username: "user@example.org", Message: "success"}, nil)
+		addr, _ := startSASLTestServer(t, mockService)
+
+		h := newSASLTestHelper(t, addr)
+		defer h.close()
+		h.doHandshake()
+
+		h.writeLine("AUTH\t1\tPLAIN\tservice=smtp\tnologin\tresp=" + plain)
+		assert.Equal(t, "OK\t1\tuser=user@example.org", h.readLine())
+		mockService.AssertExpectations(t)
+	})
 }
 
 // TestSASL_ZeroLengthInitialResponse covers "AUTH PLAIN =" and
@@ -656,7 +713,7 @@ func TestSASL_UnixSocket_Mode(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	addr := filepath.Join(dir, "auth")
 
-	server := NewSASLServer(&MockUserliService{}, zap.NewNop())
+	server := NewSASLServer(&MockUserliService{}, zap.NewNop(), false)
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
