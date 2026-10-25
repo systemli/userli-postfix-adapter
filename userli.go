@@ -23,7 +23,18 @@ type UserliService interface {
 	GetMailbox(ctx context.Context, email string) (bool, error)
 	GetSenders(ctx context.Context, email string) ([]string, error)
 	GetQuota(ctx context.Context, email string) (*Quota, error)
-	Authenticate(ctx context.Context, email, password string) (bool, string, error)
+	Authenticate(ctx context.Context, email, password string) (AuthResult, error)
+}
+
+// AuthResult is the outcome of an authentication request.
+type AuthResult struct {
+	// OK is true if the credentials were accepted.
+	OK bool
+	// Username is the canonical login (lowercased, recipient delimiter
+	// stripped) that was authenticated against the Userli API.
+	Username string
+	// Message is the message returned by the Userli API.
+	Message string
 }
 
 // Quota represents the sending quota limits for a user
@@ -241,11 +252,11 @@ func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 	return &quota, nil
 }
 
-func (u *Userli) Authenticate(ctx context.Context, email, password string) (bool, string, error) {
+func (u *Userli) Authenticate(ctx context.Context, email, password string) (AuthResult, error) {
 	sanitizedEmail, err := u.sanitizeEmail(email)
 	if err != nil {
 		logger.Info("unable to process authentication request", zap.Error(err))
-		return false, "authentication failed", nil
+		return AuthResult{Message: "authentication failed"}, nil
 	}
 
 	body, err := json.Marshal(map[string]string{
@@ -253,12 +264,12 @@ func (u *Userli) Authenticate(ctx context.Context, email, password string) (bool
 		"password": password,
 	})
 	if err != nil {
-		return false, "", fmt.Errorf("failed to marshal auth request: %w", err)
+		return AuthResult{}, fmt.Errorf("failed to marshal auth request: %w", err)
 	}
 
 	resp, err := u.call(ctx, "POST", fmt.Sprintf("%s/api/postfix/auth", u.baseURL), body)
 	if err != nil {
-		return false, "", err
+		return AuthResult{}, err
 	}
 	defer resp.Body.Close()
 
@@ -272,11 +283,11 @@ func (u *Userli) Authenticate(ctx context.Context, email, password string) (bool
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		return true, result.Message, nil
+		return AuthResult{OK: true, Username: sanitizedEmail, Message: result.Message}, nil
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return false, result.Message, nil
+		return AuthResult{Username: sanitizedEmail, Message: result.Message}, nil
 	default:
-		return false, result.Message, fmt.Errorf("unexpected status code from auth API: %d", resp.StatusCode)
+		return AuthResult{Username: sanitizedEmail, Message: result.Message}, fmt.Errorf("unexpected status code from auth API: %d", resp.StatusCode)
 	}
 }
 

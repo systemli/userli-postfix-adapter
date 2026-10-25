@@ -17,10 +17,19 @@ func NewMockConnectionHandler(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockConnectionHandler {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockConnectionHandler{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -52,7 +61,7 @@ type MockConnectionHandler_HandleConnection_Call struct {
 // HandleConnection is a helper method to define mock.On call
 //   - ctx context.Context
 //   - conn net.Conn
-func (_e *MockConnectionHandler_Expecter) HandleConnection(ctx interface{}, conn interface{}) *MockConnectionHandler_HandleConnection_Call {
+func (_e *MockConnectionHandler_Expecter) HandleConnection(ctx any, conn any) *MockConnectionHandler_HandleConnection_Call {
 	return &MockConnectionHandler_HandleConnection_Call{Call: _e.mock.On("HandleConnection", ctx, conn)}
 }
 
@@ -90,10 +99,19 @@ func NewMockUserliService(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockUserliService {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockUserliService{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -112,35 +130,29 @@ func (_m *MockUserliService) EXPECT() *MockUserliService_Expecter {
 }
 
 // Authenticate provides a mock function for the type MockUserliService
-func (_mock *MockUserliService) Authenticate(ctx context.Context, email string, password string) (bool, string, error) {
+func (_mock *MockUserliService) Authenticate(ctx context.Context, email string, password string) (AuthResult, error) {
 	ret := _mock.Called(ctx, email, password)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Authenticate")
 	}
 
-	var r0 bool
-	var r1 string
-	var r2 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (bool, string, error)); ok {
+	var r0 AuthResult
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (AuthResult, error)); ok {
 		return returnFunc(ctx, email, password)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) bool); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) AuthResult); ok {
 		r0 = returnFunc(ctx, email, password)
 	} else {
-		r0 = ret.Get(0).(bool)
+		r0 = ret.Get(0).(AuthResult)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) string); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
 		r1 = returnFunc(ctx, email, password)
 	} else {
-		r1 = ret.Get(1).(string)
+		r1 = ret.Error(1)
 	}
-	if returnFunc, ok := ret.Get(2).(func(context.Context, string, string) error); ok {
-		r2 = returnFunc(ctx, email, password)
-	} else {
-		r2 = ret.Error(2)
-	}
-	return r0, r1, r2
+	return r0, r1
 }
 
 // MockUserliService_Authenticate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Authenticate'
@@ -152,7 +164,7 @@ type MockUserliService_Authenticate_Call struct {
 //   - ctx context.Context
 //   - email string
 //   - password string
-func (_e *MockUserliService_Expecter) Authenticate(ctx interface{}, email interface{}, password interface{}) *MockUserliService_Authenticate_Call {
+func (_e *MockUserliService_Expecter) Authenticate(ctx any, email any, password any) *MockUserliService_Authenticate_Call {
 	return &MockUserliService_Authenticate_Call{Call: _e.mock.On("Authenticate", ctx, email, password)}
 }
 
@@ -179,12 +191,12 @@ func (_c *MockUserliService_Authenticate_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockUserliService_Authenticate_Call) Return(b bool, s string, err error) *MockUserliService_Authenticate_Call {
-	_c.Call.Return(b, s, err)
+func (_c *MockUserliService_Authenticate_Call) Return(authResult AuthResult, err error) *MockUserliService_Authenticate_Call {
+	_c.Call.Return(authResult, err)
 	return _c
 }
 
-func (_c *MockUserliService_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (bool, string, error)) *MockUserliService_Authenticate_Call {
+func (_c *MockUserliService_Authenticate_Call) RunAndReturn(run func(ctx context.Context, email string, password string) (AuthResult, error)) *MockUserliService_Authenticate_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -225,7 +237,7 @@ type MockUserliService_GetAliases_Call struct {
 // GetAliases is a helper method to define mock.On call
 //   - ctx context.Context
 //   - email string
-func (_e *MockUserliService_Expecter) GetAliases(ctx interface{}, email interface{}) *MockUserliService_GetAliases_Call {
+func (_e *MockUserliService_Expecter) GetAliases(ctx any, email any) *MockUserliService_GetAliases_Call {
 	return &MockUserliService_GetAliases_Call{Call: _e.mock.On("GetAliases", ctx, email)}
 }
 
@@ -291,7 +303,7 @@ type MockUserliService_GetDomain_Call struct {
 // GetDomain is a helper method to define mock.On call
 //   - ctx context.Context
 //   - domain string
-func (_e *MockUserliService_Expecter) GetDomain(ctx interface{}, domain interface{}) *MockUserliService_GetDomain_Call {
+func (_e *MockUserliService_Expecter) GetDomain(ctx any, domain any) *MockUserliService_GetDomain_Call {
 	return &MockUserliService_GetDomain_Call{Call: _e.mock.On("GetDomain", ctx, domain)}
 }
 
@@ -357,7 +369,7 @@ type MockUserliService_GetMailbox_Call struct {
 // GetMailbox is a helper method to define mock.On call
 //   - ctx context.Context
 //   - email string
-func (_e *MockUserliService_Expecter) GetMailbox(ctx interface{}, email interface{}) *MockUserliService_GetMailbox_Call {
+func (_e *MockUserliService_Expecter) GetMailbox(ctx any, email any) *MockUserliService_GetMailbox_Call {
 	return &MockUserliService_GetMailbox_Call{Call: _e.mock.On("GetMailbox", ctx, email)}
 }
 
@@ -425,7 +437,7 @@ type MockUserliService_GetQuota_Call struct {
 // GetQuota is a helper method to define mock.On call
 //   - ctx context.Context
 //   - email string
-func (_e *MockUserliService_Expecter) GetQuota(ctx interface{}, email interface{}) *MockUserliService_GetQuota_Call {
+func (_e *MockUserliService_Expecter) GetQuota(ctx any, email any) *MockUserliService_GetQuota_Call {
 	return &MockUserliService_GetQuota_Call{Call: _e.mock.On("GetQuota", ctx, email)}
 }
 
@@ -493,7 +505,7 @@ type MockUserliService_GetSenders_Call struct {
 // GetSenders is a helper method to define mock.On call
 //   - ctx context.Context
 //   - email string
-func (_e *MockUserliService_Expecter) GetSenders(ctx interface{}, email interface{}) *MockUserliService_GetSenders_Call {
+func (_e *MockUserliService_Expecter) GetSenders(ctx any, email any) *MockUserliService_GetSenders_Call {
 	return &MockUserliService_GetSenders_Call{Call: _e.mock.On("GetSenders", ctx, email)}
 }
 

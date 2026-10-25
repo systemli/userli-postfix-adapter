@@ -323,7 +323,7 @@ func (s *SASLServer) handleLoginAuth(id string, conn net.Conn, reader *bufio.Rea
 
 // authenticateAndRespond calls the Userli API and writes the auth result.
 func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, writer *bufio.Writer, id, mechanism, email, password string, startTime time.Time) {
-	ok, message, err := s.client.Authenticate(ctx, email, password)
+	result, err := s.client.Authenticate(ctx, email, password)
 	if err != nil {
 		// Fail-closed: API errors reject authentication
 		s.logger.Error("authentication API error",
@@ -333,12 +333,21 @@ func (s *SASLServer) authenticateAndRespond(ctx context.Context, conn net.Conn, 
 		return
 	}
 
-	if ok {
-		s.logger.Info("authentication successful", zap.String("email", email))
+	if result.OK {
+		// Report the canonical login rather than what the client typed.
+		// Postfix exposes user= as sasl_username, which keys the
+		// rate limiter and reject_sender_login_mismatch; variants like
+		// "User@example.org" or "user+tag@example.org" must not yield
+		// distinct identities.
+		username := result.Username
+		if username == "" {
+			username = email
+		}
+		s.logger.Info("authentication successful", zap.String("email", username))
 		s.recordAuthResult(mechanism, "success", startTime)
-		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", id, sanitizeField(email)))
+		s.writeResponse(conn, writer, fmt.Sprintf("OK\t%s\tuser=%s", id, sanitizeField(username)))
 	} else {
-		reason := message
+		reason := result.Message
 		if reason == "" {
 			reason = "authentication failed"
 		}

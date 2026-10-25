@@ -650,11 +650,27 @@ func (s *UserliTestSuite) TestAuthenticate() {
 			Reply(200).
 			JSON(map[string]string{"message": "success"})
 
-		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
+		res, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
 		s.NoError(err)
 		s.True(gock.IsDone())
-		s.True(ok)
-		s.Equal("success", msg)
+		s.True(res.OK)
+		s.Equal("success", res.Message)
+	})
+
+	s.Run("success returns canonical username", func() {
+		gock.New("http://localhost:8000").
+			Post("/api/postfix/auth").
+			MatchType("json").
+			JSON(map[string]string{"email": "user@example.com", "password": "secret"}).
+			Reply(200).
+			JSON(map[string]string{"message": "success"})
+
+		u := NewUserli("insecure", "http://localhost:8000", WithClient(http.DefaultClient), WithDelimiter("+"))
+		res, err := u.Authenticate(context.Background(), "User+tag@Example.com", "secret")
+		s.NoError(err)
+		s.True(gock.IsDone())
+		s.True(res.OK)
+		s.Equal("user@example.com", res.Username)
 	})
 
 	s.Run("invalid credentials", func() {
@@ -664,11 +680,11 @@ func (s *UserliTestSuite) TestAuthenticate() {
 			Reply(401).
 			JSON(map[string]string{"message": "authentication failed"})
 
-		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "wrong")
+		res, err := s.userli.Authenticate(context.Background(), "user@example.com", "wrong")
 		s.NoError(err)
 		s.True(gock.IsDone())
-		s.False(ok)
-		s.Equal("authentication failed", msg)
+		s.False(res.OK)
+		s.Equal("authentication failed", res.Message)
 	})
 
 	s.Run("forbidden spam user", func() {
@@ -677,11 +693,11 @@ func (s *UserliTestSuite) TestAuthenticate() {
 			Reply(403).
 			JSON(map[string]string{"message": "user disabled due to spam role"})
 
-		ok, msg, err := s.userli.Authenticate(context.Background(), "spam@example.com", "secret")
+		res, err := s.userli.Authenticate(context.Background(), "spam@example.com", "secret")
 		s.NoError(err)
 		s.True(gock.IsDone())
-		s.False(ok)
-		s.Equal("user disabled due to spam role", msg)
+		s.False(res.OK)
+		s.Equal("user disabled due to spam role", res.Message)
 	})
 
 	s.Run("forbidden password change required", func() {
@@ -690,11 +706,11 @@ func (s *UserliTestSuite) TestAuthenticate() {
 			Reply(403).
 			JSON(map[string]string{"message": "user password change required"})
 
-		ok, msg, err := s.userli.Authenticate(context.Background(), "pwchange@example.com", "secret")
+		res, err := s.userli.Authenticate(context.Background(), "pwchange@example.com", "secret")
 		s.NoError(err)
 		s.True(gock.IsDone())
-		s.False(ok)
-		s.Equal("user password change required", msg)
+		s.False(res.OK)
+		s.Equal("user password change required", res.Message)
 	})
 
 	s.Run("server error", func() {
@@ -702,18 +718,18 @@ func (s *UserliTestSuite) TestAuthenticate() {
 			Post("/api/postfix/auth").
 			Reply(500)
 
-		ok, msg, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
+		res, err := s.userli.Authenticate(context.Background(), "user@example.com", "secret")
 		s.Error(err)
 		s.True(gock.IsDone())
-		s.False(ok)
-		s.Equal("unexpected error", msg)
+		s.False(res.OK)
+		s.Equal("unexpected error", res.Message)
 	})
 
 	s.Run("invalid email", func() {
-		ok, msg, err := s.userli.Authenticate(context.Background(), "invalid", "secret")
+		res, err := s.userli.Authenticate(context.Background(), "invalid", "secret")
 		s.NoError(err)
-		s.False(ok)
-		s.Equal("authentication failed", msg)
+		s.False(res.OK)
+		s.Equal("authentication failed", res.Message)
 	})
 
 	s.Run("timeout", func() {
@@ -725,9 +741,9 @@ func (s *UserliTestSuite) TestAuthenticate() {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 
-		ok, _, err := s.userli.Authenticate(ctx, "user@example.com", "secret")
+		res, err := s.userli.Authenticate(ctx, "user@example.com", "secret")
 		s.Error(err)
-		s.False(ok)
+		s.False(res.OK)
 	})
 }
 
