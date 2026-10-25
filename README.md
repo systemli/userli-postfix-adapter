@@ -82,6 +82,33 @@ smtpd_sasl_auth_enable = yes
 - The SASL socket answers any client that can reach it, so it can be used to test passwords without going through Postfix (and its TLS and client restrictions). Bind TCP listeners to `localhost` or a private network only, and keep UNIX sockets inside Postfix' `private/` directory or restrict them with `SASL_SOCKET_MODE`.
 - The adapter announces PLAIN and LOGIN as plaintext mechanisms and does not enforce TLS itself. Set `smtpd_tls_auth_only = yes` so Postfix offers AUTH only after STARTTLS.
 
+**Brute-force protection:**
+
+The adapter does not delay or throttle failed authentications itself (unlike Dovecot's `auth_failure_delay`). Handle this in Postfix and at the firewall, which also covers other services and drops attackers before they reach the Userli API:
+
+```text
+# master.cf: on the services with SASL enabled (submission, submissions)
+submission inet n - n - - smtpd
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_tls_auth_only=yes
+  -o smtpd_client_auth_rate_limit=10
+  -o smtpd_error_sleep_time=1s
+  -o smtpd_soft_error_limit=3
+  -o smtpd_hard_error_limit=5
+```
+
+- `smtpd_client_auth_rate_limit`: maximum AUTH commands per client IP per `anvil_rate_time_unit` (default `60s`). Postfix default is `0` (unlimited).
+- `smtpd_error_sleep_time` / `smtpd_soft_error_limit`: failed AUTHs count as errors; past the soft limit every response is delayed.
+- `smtpd_hard_error_limit`: disconnect the client after this many errors.
+
+Postfix logs every failed authentication with the client IP:
+
+```text
+warning: unknown[192.0.2.1]: SASL LOGIN authentication failed: authentication failed
+```
+
+Ban offending clients based on this line, e.g. with the [fail2ban](https://github.com/fail2ban/fail2ban) `postfix-sasl` jail or the [CrowdSec](https://app.crowdsec.net/hub/author/crowdsecurity/collections/postfix) `crowdsecurity/postfix` collection (SASL failures feed the `crowdsecurity/postfix-spam` scenario). Monitor `userli_postfix_adapter_sasl_auth_total{result="invalid_credentials"}` to spot distributed attacks that stay below per-IP limits.
+
 ## Docker
 
 You can run the adapter using Docker.
