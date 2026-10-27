@@ -19,18 +19,42 @@ type PolicyServer struct {
 	client           UserliService
 	rateLimiter      *RateLimiter
 	rateLimitMessage string
+	delimiter        string
 	logger           *zap.Logger
 }
 
+// PolicyOption configures a PolicyServer
+type PolicyOption func(*PolicyServer)
+
+// WithPolicyRecipientDelimiter sets the Postfix recipient delimiter, so that
+// "support+tag@example.org" matches the allowed recipient "support@example.org".
+func WithPolicyRecipientDelimiter(delimiter string) PolicyOption {
+	return func(p *PolicyServer) {
+		p.delimiter = delimiter
+	}
+}
+
 // NewPolicyServer creates a new PolicyServer with the given UserliService
-func NewPolicyServer(client UserliService, rateLimiter *RateLimiter, rateLimitMessage string, logger *zap.Logger) *PolicyServer {
-	return &PolicyServer{
+func NewPolicyServer(client UserliService, rateLimiter *RateLimiter, rateLimitMessage string, logger *zap.Logger, opts ...PolicyOption) *PolicyServer {
+	p := &PolicyServer{
 		client:           client,
 		rateLimiter:      rateLimiter,
 		rateLimitMessage: rateLimitMessage,
 		logger:           logger,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p
 }
+
+const (
+	// sendingDeniedMessage is returned for recipients an account may not send to.
+	sendingDeniedMessage = "Sending is not permitted for this account, please contact support"
+	// sendingCheckFailedMessage is returned if the sending permission can't be determined.
+	sendingCheckFailedMessage = "Temporary failure, please try again later"
+)
 
 // StartPolicyServer starts the policy server on the given address
 func StartPolicyServer(ctx context.Context, wg *sync.WaitGroup, addr string, server *PolicyServer) {
@@ -173,7 +197,13 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 		zap.String("sasl_username", req.SaslUsername),
 		zap.String("protocol", req.ProtocolState))
 
-	// Only check at END-OF-MESSAGE stage for outgoing mail
+	// The sending permission is checked per recipient, since only RCPT
+	// knows every recipient of a message
+	if req.ProtocolState == "RCPT" {
+		return p.handleRecipient(ctx, req, startTime)
+	}
+
+	// Only check rate limits at END-OF-MESSAGE stage for outgoing mail
 	// This ensures we only count messages that will actually be sent
 	if req.ProtocolState != "END-OF-MESSAGE" {
 		policyRequestsTotal.WithLabelValues("skip", "dunno").Inc()
@@ -252,6 +282,82 @@ func (p *PolicyServer) handleRequest(ctx context.Context, req *PolicyRequest) st
 	policyRequestDuration.WithLabelValues("check", "dunno").Observe(time.Since(startTime).Seconds())
 
 	return "DUNNO"
+}
+
+// handleRecipient enforces the sending permission of authenticated senders at
+// the RCPT stage. Unlike the rate limit it fails closed: if the permission
+// can't be determined, the recipient is deferred. It never counts messages.
+func (p *PolicyServer) handleRecipient(ctx context.Context, req *PolicyRequest, startTime time.Time) string {
+	observe := func(action string) {
+		policyRequestsTotal.WithLabelValues("rcpt", action).Inc()
+		policyRequestDuration.WithLabelValues("rcpt", action).Observe(time.Since(startTime).Seconds())
+	}
+
+	// Mail from unauthenticated clients is not outgoing mail
+	if req.SaslUsername == "" {
+		observe("dunno")
+		return "DUNNO"
+	}
+
+	quotaCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	quota, err := p.client.GetQuota(quotaCtx, req.SaslUsername)
+	if err != nil {
+		p.logger.Warn("Failed to fetch sending permission, deferring recipient",
+			zap.String("queue_id", req.QueueID),
+			zap.String("sender", req.SaslUsername), zap.Error(err))
+		observe("defer")
+		return "DEFER " + sendingCheckFailedMessage
+	}
+
+	if quota.SendingAllowed || p.isAllowedRecipient(req.Recipient, quota.AllowedRecipients) {
+		observe("dunno")
+		return "DUNNO"
+	}
+
+	p.logger.Info("Sending denied",
+		zap.String("queue_id", req.QueueID),
+		zap.String("sender", req.SaslUsername))
+
+	observe("reject")
+	sendingDeniedTotal.Inc()
+
+	return "REJECT " + sendingDeniedMessage
+}
+
+// isAllowedRecipient reports whether recipient is one of the allowed
+// recipients, ignoring case and the recipient delimiter tag.
+func (p *PolicyServer) isAllowedRecipient(recipient string, allowed []string) bool {
+	recipient = p.normalizeAddress(recipient)
+	for _, a := range allowed {
+		if recipient == p.normalizeAddress(a) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// normalizeAddress lowercases an address and removes the recipient delimiter
+// tag from its local part.
+func (p *PolicyServer) normalizeAddress(address string) string {
+	address = strings.ToLower(strings.TrimSpace(address))
+	if p.delimiter == "" {
+		return address
+	}
+
+	at := strings.LastIndex(address, "@")
+	if at < 0 {
+		return address
+	}
+
+	localPart, domain := address[:at], address[at:]
+	if idx := strings.Index(localPart, p.delimiter); idx != -1 {
+		localPart = localPart[:idx]
+	}
+
+	return localPart + domain
 }
 
 // writeResponse writes the policy response to the connection

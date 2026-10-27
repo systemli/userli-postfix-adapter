@@ -78,7 +78,7 @@ client_address=192.168.1.1
 	}
 }
 
-func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
+func TestPolicyServer_HandleRequest_SkipOtherStates(t *testing.T) {
 	mockClient := &MockUserliServiceForPolicy{
 		quota: &Quota{PerHour: 10, PerDay: 100},
 	}
@@ -86,7 +86,7 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded, please try again later", zap.NewNop())
 
 	req := &PolicyRequest{
-		ProtocolState: "RCPT",
+		ProtocolState: "DATA",
 		Sender:        "user@example.org",
 		SaslUsername:  "user@example.org",
 	}
@@ -94,7 +94,117 @@ func TestPolicyServer_HandleRequest_SkipNonEndOfMessage(t *testing.T) {
 	response := server.handleRequest(context.Background(), req)
 
 	if response != "DUNNO" {
-		t.Errorf("Expected DUNNO for non-END-OF-MESSAGE state, got %s", response)
+		t.Errorf("Expected DUNNO for state DATA, got %s", response)
+	}
+}
+
+func TestPolicyServer_HandleRequest_Recipient(t *testing.T) {
+	denied := &Quota{SendingAllowed: false, AllowedRecipients: []string{"support@example.org"}}
+
+	tests := []struct {
+		name      string
+		quota     *Quota
+		quotaErr  error
+		delimiter string
+		req       PolicyRequest
+		want      string
+	}{
+		{
+			name:  "sending allowed",
+			quota: &Quota{SendingAllowed: true},
+			req:   PolicyRequest{SaslUsername: "user@example.org", Recipient: "other@example.com"},
+			want:  "DUNNO",
+		},
+		{
+			name:  "denied sender to allowed recipient",
+			quota: denied,
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "support@example.org"},
+			want:  "DUNNO",
+		},
+		{
+			name:  "allowed recipient ignores case",
+			quota: denied,
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "Support@Example.org"},
+			want:  "DUNNO",
+		},
+		{
+			name:      "allowed recipient ignores delimiter tag",
+			quota:     denied,
+			delimiter: "+",
+			req:       PolicyRequest{SaslUsername: "spam@example.org", Recipient: "support+help@example.org"},
+			want:      "DUNNO",
+		},
+		{
+			name:  "delimiter tag is not stripped without delimiter",
+			quota: denied,
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "support+help@example.org"},
+			want:  "REJECT " + sendingDeniedMessage,
+		},
+		{
+			name:  "denied sender to other recipient",
+			quota: denied,
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "other@example.com"},
+			want:  "REJECT " + sendingDeniedMessage,
+		},
+		{
+			name:  "denied sender without allowed recipients",
+			quota: &Quota{SendingAllowed: false},
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "support@example.org"},
+			want:  "REJECT " + sendingDeniedMessage,
+		},
+		{
+			name:  "recipient with other domain is not allowed",
+			quota: denied,
+			req:   PolicyRequest{SaslUsername: "spam@example.org", Recipient: "support@example.com"},
+			want:  "REJECT " + sendingDeniedMessage,
+		},
+		{
+			name:     "API error defers",
+			quotaErr: fmt.Errorf("API error"),
+			req:      PolicyRequest{SaslUsername: "user@example.org", Recipient: "other@example.com"},
+			want:     "DEFER " + sendingCheckFailedMessage,
+		},
+		{
+			name:     "no sasl username skips the check",
+			quotaErr: fmt.Errorf("API error"),
+			req:      PolicyRequest{Sender: "spam@example.org", Recipient: "other@example.com"},
+			want:     "DUNNO",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &MockUserliServiceForPolicy{quota: tt.quota, quotaErr: tt.quotaErr}
+			rateLimiter, _ := newTestRateLimiter(t)
+			server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded", zap.NewNop(),
+				WithPolicyRecipientDelimiter(tt.delimiter))
+
+			tt.req.ProtocolState = "RCPT"
+
+			if got := server.handleRequest(context.Background(), &tt.req); got != tt.want {
+				t.Errorf("Expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestPolicyServer_HandleRequest_RecipientDoesNotCount(t *testing.T) {
+	mockClient := &MockUserliServiceForPolicy{
+		quota: &Quota{PerHour: 1, PerDay: 1, SendingAllowed: true},
+	}
+	rateLimiter, _ := newTestRateLimiter(t)
+	server := NewPolicyServer(mockClient, rateLimiter, "Rate limit exceeded", zap.NewNop())
+
+	for range 3 {
+		rcpt := &PolicyRequest{ProtocolState: "RCPT", SaslUsername: "user@example.org", Recipient: "a@example.com"}
+		if got := server.handleRequest(context.Background(), rcpt); got != "DUNNO" {
+			t.Fatalf("Expected DUNNO at RCPT, got %s", got)
+		}
+	}
+
+	eom := &PolicyRequest{ProtocolState: "END-OF-MESSAGE", SaslUsername: "user@example.org"}
+	if got := server.handleRequest(context.Background(), eom); got != "DUNNO" {
+		t.Errorf("Expected first message to be allowed, got %s", got)
 	}
 }
 

@@ -32,27 +32,45 @@ virtual_mailbox_maps = socketmap:inet:localhost:10001:mailbox
 smtpd_sender_login_maps = socketmap:inet:localhost:10001:senders
 ```
 
-### Rate Limiting (Policy Server)
+### Policy Server (Sending Permission and Rate Limiting)
 
-The adapter also provides a Postfix SMTP Access Policy Delegation server for rate limiting outgoing mail.
-It queries the Userli API for per-user quotas and enforces sending limits.
+The adapter also provides a Postfix SMTP Access Policy Delegation server for outgoing mail.
+It queries the Userli API for the quota and sending permission of the authenticated sender and enforces them.
 
 Configure in Postfix `main.cf`:
 
 ```text
+smtpd_recipient_restrictions =
+    check_policy_service inet:localhost:10003,
+    permit_sasl_authenticated,
+    reject_unauth_destination
 smtpd_end_of_data_restrictions = check_policy_service inet:localhost:10003
 ```
+
+The policy service must come before `permit_sasl_authenticated`, otherwise it is never asked for authenticated senders.
 
 The Userli API endpoint `/api/postfix/smtp_quota/{email}` returns:
 
 ```json
 {
     "per_hour": 100,
-    "per_day": 1000
+    "per_day": 1000,
+    "sending_allowed": true,
+    "allowed_recipients": []
 }
 ```
 
-Where `0` means unlimited. If the API is unreachable, messages are allowed (fail-open).
+#### Sending permission
+
+If `sending_allowed` is `false`, the sender may only send to the addresses in `allowed_recipients`. All other recipients are rejected. Userli decides when this applies, e.g. for accounts marked as compromised, so that these accounts can still reach support.
+
+The permission is checked for every recipient (`RCPT` stage) of SASL-authenticated clients. Mail without `sasl_username` is not checked. Recipients are compared case-insensitively and without the recipient delimiter tag (`POSTFIX_RECIPIENT_DELIMITER`). Responses without `sending_allowed` (older Userli versions) allow sending.
+
+**Important:** This check is fail-closed. If the API is unreachable or answers with an error, recipients are deferred with a temporary error (`450`), so that mail clients retry later.
+
+#### Rate limiting
+
+The limits are checked at the `END-OF-MESSAGE` stage. `0` means unlimited. If the API is unreachable, messages are allowed (fail-open).
 
 Rate-limit state is persisted to Redis (`REDIS_URL`) so it survives restarts. If Redis is unreachable, messages are also allowed (fail-open) and the `userli_postfix_adapter_ratelimit_backend_errors_total` counter is incremented.
 
@@ -62,7 +80,7 @@ The adapter implements the Dovecot SASL authentication protocol, so Postfix can 
 
 **Important:** SASL authentication is fail-closed. If the API is unreachable or slow (requests time out after 5 seconds), authentication is rejected with a temporary error (`454`), so mail clients retry instead of asking for a new password.
 
-Rejected credentials are always reported as `authentication failed`, without the reason from the Userli API (e.g. a spam lock). Postfix passes the reason to the SMTP client, and the API reports account states before checking the password. The reason is logged by the adapter.
+Rejected credentials are always reported as `authentication failed`, without the reason from the Userli API (e.g. a required password change). Postfix passes the reason to the SMTP client, and the API reports account states before checking the password. The reason is logged by the adapter.
 
 Configure in Postfix `main.cf` (TCP):
 
