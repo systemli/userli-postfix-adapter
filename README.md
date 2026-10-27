@@ -253,6 +253,7 @@ The adapter exposes Prometheus metrics on `/metrics` (port 10002) and provides h
 - `userli_postfix_adapter_policy_requests_total` - Total policy request counter
 - `userli_postfix_adapter_policy_request_duration_seconds` - Policy request duration histogram
 - `userli_postfix_adapter_quota_exceeded_total` - Total messages rejected due to quota
+- `userli_postfix_adapter_sending_denied_total` - Total recipients rejected because the sender may not send to them
 - `userli_postfix_adapter_quota_checks_total` - Total quota checks performed
 - `userli_postfix_adapter_ratelimit_backend_errors_total` - Total Redis errors hit by the rate limiter, labelled by `operation`
 
