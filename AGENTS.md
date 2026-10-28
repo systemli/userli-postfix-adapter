@@ -18,7 +18,7 @@ Key abstraction: `ConnectionHandler` interface in `tcpserver.go` — both `Looku
 
 ## Design Constraints
 
-- **Fail-open**: API errors must return `DUNNO`/allow and never block mail delivery
+- **Fail-open**: API errors must return `DUNNO`/allow and never block mail delivery, except the sending permission check at `RCPT`, which fails closed (`DEFER`)
 - **No PII in metrics**: aggregate counters only, no email addresses in Prometheus labels
 - Never store `context.Context` in structs — pass through function parameters
 
@@ -28,7 +28,7 @@ Socketmap (lookup): netstring-encoded `<len>:<mapname> <key>,` → `<len>:<statu
 Responses: `OK <data>`, `NOTFOUND`, `TEMP <msg>`, `PERM <msg>`
 
 Policy delegation: `name=value\n` pairs, empty line terminates → `action=ACTION\n\n`
-Only process at `protocol_state=END-OF-MESSAGE` for accurate counting.
+Rate limits are only processed at `protocol_state=END-OF-MESSAGE` for accurate counting. The sending permission is checked at `protocol_state=RCPT` for SASL-authenticated senders and never counts.
 
 ## Pitfalls
 

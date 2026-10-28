@@ -60,7 +60,8 @@ func main() {
 	}
 
 	lookupServer := NewLookupServer(userli, lookupCache, logger.Named("lookup"))
-	policyServer := NewPolicyServer(userli, rateLimiter, config.RateLimitMessage, logger.Named("policy"))
+	policyServer := NewPolicyServer(userli, rateLimiter, config.RateLimitMessage, logger.Named("policy"),
+		WithPolicyRecipientDelimiter(config.PostfixRecipientDelimiter))
 
 	var wg sync.WaitGroup
 

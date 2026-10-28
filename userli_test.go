@@ -243,6 +243,45 @@ func (s *UserliTestSuite) TestGetQuota() {
 		s.NotNil(quota)
 		s.Equal(50, quota.PerHour)
 		s.Equal(500, quota.PerDay)
+		// Responses without sending_allowed come from Userli versions that always allow sending
+		s.True(quota.SendingAllowed)
+		s.Empty(quota.AllowedRecipients)
+		s.True(gock.IsDone())
+	})
+
+	s.Run("sending not allowed", func() {
+		gock.New("http://localhost:8000").
+			Get("/api/postfix/smtp_quota/user@example.com").
+			Reply(200).
+			JSON(map[string]any{
+				"per_hour":           0,
+				"per_day":            0,
+				"sending_allowed":    false,
+				"allowed_recipients": []string{"support@example.org"},
+			})
+
+		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
+		s.NoError(err)
+		s.NotNil(quota)
+		s.False(quota.SendingAllowed)
+		s.Equal([]string{"support@example.org"}, quota.AllowedRecipients)
+		s.True(gock.IsDone())
+	})
+
+	s.Run("sending allowed", func() {
+		gock.New("http://localhost:8000").
+			Get("/api/postfix/smtp_quota/user@example.com").
+			Reply(200).
+			JSON(map[string]any{
+				"per_hour":           10,
+				"per_day":            100,
+				"sending_allowed":    true,
+				"allowed_recipients": []string{},
+			})
+
+		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
+		s.NoError(err)
+		s.True(quota.SendingAllowed)
 		s.True(gock.IsDone())
 	})
 
@@ -262,13 +301,10 @@ func (s *UserliTestSuite) TestGetQuota() {
 			Reply(500).
 			JSON(map[string]string{"error": "internal server error"})
 
-		// call() does not check HTTP status codes, so the response body
-		// is decoded into a Quota struct with zero values (no matching keys).
+		// An error response must not decode to a quota that allows sending
 		quota, err := s.userli.GetQuota(context.Background(), "user@example.com")
-		s.NoError(err)
-		s.NotNil(quota)
-		s.Equal(0, quota.PerHour)
-		s.Equal(0, quota.PerDay)
+		s.Error(err)
+		s.Nil(quota)
 		s.True(gock.IsDone())
 	})
 

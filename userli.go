@@ -37,10 +37,26 @@ type AuthResult struct {
 	Message string
 }
 
-// Quota represents the sending quota limits for a user
+// Quota represents the sending quota limits and sending permission for a user
 type Quota struct {
 	PerHour int `json:"per_hour"`
 	PerDay  int `json:"per_day"`
+	// SendingAllowed is false if the sender may only send to AllowedRecipients.
+	SendingAllowed bool `json:"sending_allowed"`
+	// AllowedRecipients are the only recipients permitted if SendingAllowed is false.
+	AllowedRecipients []string `json:"allowed_recipients"`
+}
+
+// UnmarshalJSON decodes a quota response. Responses of Userli versions
+// without the sending permission omit sending_allowed, which means allowed.
+func (q *Quota) UnmarshalJSON(data []byte) error {
+	type plain Quota
+	aux := plain{SendingAllowed: true}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*q = Quota(aux)
+	return nil
 }
 
 // DefaultAPITimeout bounds a whole Userli API call, including reading the
@@ -247,6 +263,11 @@ func (u *Userli) GetQuota(ctx context.Context, email string) (*Quota, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// A failed lookup must not be mistaken for a quota that allows sending
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code from quota API: %d", resp.StatusCode)
+	}
 
 	var quota Quota
 	err = json.NewDecoder(resp.Body).Decode(&quota)

@@ -86,6 +86,11 @@ var (
 		Help: "Total number of messages rejected due to quota",
 	})
 
+	sendingDeniedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "userli_postfix_adapter_sending_denied_total",
+		Help: "Total number of recipients rejected because the sender is not allowed to send to them",
+	})
+
 	quotaChecksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "userli_postfix_adapter_quota_checks_total",
 		Help: "Total number of quota checks performed",
@@ -147,6 +152,7 @@ func StartMetricsServer(ctx context.Context, listenAddr string, userliClient Use
 		policyRequestsTotal,
 		policyRequestDuration,
 		quotaExceededTotal,
+		sendingDeniedTotal,
 		quotaChecksTotal,
 		policyConnectionPoolFullTotal,
 		rateLimitBackendErrors,
